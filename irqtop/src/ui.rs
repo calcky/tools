@@ -284,10 +284,7 @@ pub fn draw(canvas: &mut Canvas, report: &Frame, state: &mut State) {
     text(
         canvas,
         settings,
-        format!(
-            "interval {:.3}s | rate >= {}/s",
-            report.elapsed, report.min_rate
-        ),
+        format!("interval {:.3}s | {}", report.elapsed, report.rate_filter()),
         plain,
     );
     main_line(canvas, header, report, None);
@@ -340,7 +337,7 @@ pub fn draw(canvas: &mut Canvas, report: &Frame, state: &mut State) {
             if report.matched == 0 {
                 "No matching sources".into()
             } else {
-                format!("No sources at or above {:.2}/s", report.min_rate)
+                format!("No sources with CPU rate > {}/s", report.min_rate)
             },
             plain,
         );
@@ -387,7 +384,7 @@ pub fn draw(canvas: &mut Canvas, report: &Frame, state: &mut State) {
     text(
         canvas,
         keys,
-        "q quit | a all | n net | z >=200 | s sort | b softnet",
+        "q quit | a all | n net | z >200 | s sort | b softnet",
         plain,
     );
 }
@@ -450,7 +447,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         let counts = (0..64)
-            .map(|c| (c + 100).to_string())
+            .map(|c| (c + 300).to_string())
             .collect::<Vec<_>>()
             .join(" ");
         let hard = crate::parse(&format!("{cpus}\nLOC: {counts} local\n")).unwrap();
@@ -583,12 +580,12 @@ mod tests {
             let buffer = screen(&report, &mut state, width, 80);
             let display = lines(&buffer);
             assert!(display[5].ends_with("rate/s"));
-            assert!(display[3].contains("rate >= 200/s"));
+            assert!(display[3].contains("CPU rate > 200/s"));
             assert!(!display
                 .iter()
                 .any(|line| line.contains("CPU columns") || line.contains("filter")));
             assert!(display[78].contains("PgUp/PgDn page"));
-            assert!(display[79].contains("a all | n net | z >=200"));
+            assert!(display[79].contains("a all | n net | z >200"));
             assert!(buffer[(1, 5)].modifier.contains(Modifier::BOLD));
             for row in &report.entries {
                 let y = display.iter().position(|s| s.starts_with(&row.id)).unwrap();

@@ -138,7 +138,7 @@ s = Session(['-m', '0'])
 try:
     s.wait(lambda: s.contains('Rows 1-'))
     hard_color = s.wait_table()
-    assert s.contains('rate >= 0/s')
+    assert s.contains('rate off')
     assert not s.contains('CPU columns') and not s.contains('filter')
     s.send(b'\x1b[6~')
     s.wait(lambda: s.start_row() > 1)
@@ -171,9 +171,9 @@ try:
     s.wait(lambda: s.content_lines()[5].endswith('rate/s'))
     s.wait_table()
     s.send(b'z')
-    s.wait(lambda: s.contains('rate >= 200/s'))
+    s.wait(lambda: s.contains('CPU rate > 200/s'))
     s.send(b'z')
-    s.wait(lambda: s.contains('rate >= 0/s'))
+    s.wait(lambda: s.contains('CPU rate > 0/s'))
     s.send(b's')
     s.read()
     s.wait_table()
@@ -213,7 +213,7 @@ s = Session(['-n', '-d', '-m', '0'])
 try:
     s.wait(lambda: s.contains('Rows 1-'))
     s.wait_table('count')
-    assert s.contains('rate >= 0/s') and 'count' in s.screen.display[1]
+    assert s.contains('rate off') and 'count' in s.screen.display[1]
     s.close()
 finally:
     s.dispose()
@@ -246,7 +246,8 @@ finally:
 
 s = Session(['-n', '-b', '-m', '0'])
 try:
-    s.wait(lambda: s.contains('SOFTNET | host') and s.contains('processed/s'))
+    s.wait(lambda: s.contains('SOFTNET | host') and s.contains('processed/s')
+           and s.contains('Tab softnet'))
     assert s.contains('Tab softnet')
     assert s.panel_focused('IRQ / SOFTIRQ') and not s.panel_focused('SOFTNET | host')
     for height, width in [(20, 55), (24, 80), (40, 120)]:

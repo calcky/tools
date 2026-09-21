@@ -45,10 +45,10 @@ impl Printer {
         if !self.started {
             writeln!(
                 out,
-                "{} | {} | rate >= {}/s\n",
+                "{} | {} | {}\n",
                 report.program,
                 fit(&report.scope, usize::MAX),
-                report.min_rate
+                report.rate_filter()
             )?;
         } else {
             writeln!(out)?;
@@ -72,7 +72,7 @@ impl Printer {
 
         for row in &report.entries {
             let cpu = match row.cpus.as_slice() {
-                [(id, _)] => format!("CPU{id}"),
+                [(id, _)] if row.active_cpus == 1 => format!("CPU{id}"),
                 [] => "-".into(),
                 _ => "all".into(),
             };
@@ -82,7 +82,7 @@ impl Printer {
                 self.table_line(&report.clock, &row.id, &cpu, &row.source, &row.value)
             )?;
             self.lines_since_header += 1;
-            if row.cpus.len() <= 1 {
+            if row.cpus.is_empty() || row.active_cpus == 1 {
                 continue;
             }
 
@@ -112,7 +112,7 @@ impl Printer {
             let message = if report.matched == 0 {
                 "No matching sources".to_string()
             } else {
-                format!("No sources >= {}/s", report.min_rate)
+                format!("No sources with CPU rate > {}/s", report.min_rate)
             };
             writeln!(out, "{}  {message}", report.clock)?;
             self.lines_since_header += 1;
@@ -233,6 +233,47 @@ mod tests {
     }
 
     #[test]
+    fn filtered_cpu_details_do_not_mislabel_the_full_irq_total() {
+        let before = parse("CPU0 CPU4\n24: 0 0 net\n25: 0 0 net\n26: 0 0 net\n").unwrap();
+        let after = parse("CPU0 CPU4\n24: 700 160 net\n25: 0 700 net\n26: 701 1 net\n").unwrap();
+        for count in [false, true] {
+            let mut o = options(vec![]).unwrap();
+            o.delta = count;
+            let report = frame(&o, Some(&before), &after, 2.0, 80);
+            let mut out = Vec::new();
+            Printer::default().print(&mut out, &report, 24).unwrap();
+            let output = String::from_utf8(out).unwrap();
+            let rows = output
+                .lines()
+                .filter(|s| s.starts_with(&report.clock))
+                .map(|s| s.split_whitespace().skip(1).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows[0],
+                ["24", "all", "-", if count { "860" } else { "430.00" }]
+            );
+            assert_eq!(
+                rows[1],
+                ["25", "CPU4", "-", if count { "700" } else { "350.00" }]
+            );
+            assert_eq!(
+                rows[2],
+                ["26", "all", "-", if count { "702" } else { "351.00" }]
+            );
+            let details = output
+                .lines()
+                .filter(|s| s.starts_with("          CPU"))
+                .collect::<Vec<_>>();
+            assert_eq!(details.len(), 2);
+            assert_eq!(
+                details[0].split_whitespace().collect::<Vec<_>>(),
+                ["CPU0:", if count { "700" } else { "350.00" }]
+            );
+            assert!(!output.contains("CPU4:"));
+        }
+    }
+
+    #[test]
     fn all_cpu_details_and_totals_fit_without_losing_values() {
         let cpus = (0..64)
             .map(|c| format!("CPU{c}"))
@@ -245,7 +286,7 @@ mod tests {
         let snapshot = parse_domain(&format!("{cpus}\nNET_RX: {values}\n"), Domain::Soft).unwrap();
         for width in [55, 80, 120, 160] {
             let report = frame(
-                &options(vec!["-s".into()]).unwrap(),
+                &options(vec!["-s".into(), "-m".into(), "0".into()]).unwrap(),
                 None,
                 &snapshot,
                 1.0,
@@ -303,7 +344,7 @@ mod tests {
             .lines()
             .any(|s| s.split_whitespace().collect::<Vec<_>>()
                 == ["11:14:53", "401", "-", "xnic0/vf9", "0"]));
-        assert!(output.contains("11:14:53  No sources >= 200/s"));
+        assert!(output.contains("11:14:53  No sources with CPU rate > 200/s"));
         assert!(output.contains("11:14:53  No matching sources"));
         assert!(!output.contains('\x1b'));
     }

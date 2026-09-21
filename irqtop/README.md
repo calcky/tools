@@ -17,7 +17,7 @@ irqtop -n                      # Network hardware IRQs + NET_RX/NET_TX
 irqtop -n -b                   # Also show host softnet statistics
 irqtop -i nic0                  # nic0 hardware IRQs + host NET_RX/NET_TX
 irqtop -i xnic0/vf0             # VF 0 passed through from PF xnic0
-irqtop -n -m 500                # Only sources at or above 500/s
+irqtop -n -m 500                # Only CPUs above 500/s and their sources
 irqtop -n -z                   # Every non-zero network source
 irqstat                        # All hardware IRQs only
 irqstat -n                     # Network hardware IRQs only
@@ -38,22 +38,23 @@ irqstat -m 0 1 60 > irq.log     # Plain-text capture including idle sources
 | `-s` | Include softirqs in irqstat; already enabled in irqtop |
 | `-b` | Add host-wide per-CPU softnet statistics |
 | `-i NIC[,NIC]` | Exact interface or PF/vfN labels; implies `-n`, including when combined with `-a` |
-| `-m RATE` | Minimum total rate per source; default `200/s` |
+| `-m RATE` | Show CPUs strictly above RATE/s; hide a source if no CPU qualifies; default `200`, `0` disables filtering |
 | `-z` | Show every non-zero source; `-m 0` also includes idle sources |
-| `-d` | Raw interval counts instead of rates; `-m` still uses the rate per second |
+| `-d` | Raw interval counts instead of rates; `-m` still filters each CPU's rate per second |
 | `-h` | Help |
 | `-v` | Version |
 
 `interval [count]` uses seconds and printed reports; decimals are supported.
 The baseline is never printed or counted. Ctrl+C stops either command.
 Only the short options above are supported. irqtop initially sorts by descending
-rate within each section; irqstat sorts by IRQ. All CPUs are included.
+total rate within each section; irqstat sorts by IRQ. All CPUs are sampled.
 
 ## Reading the display
 
 - irqstat uses `TIME IRQ/TYPE CPU NETDEV rate/s` columns. A source active on
   one CPU uses one row, with a label such as `CPU28`. Multiple active CPUs use
-  `all` for the total, followed by compact CPU details; an idle source uses `-`.
+  `all` for the total, followed by CPU details above the threshold, even if only
+  one CPU remains visible; an idle source uses `-` with `-m 0`.
   The scope and rate threshold print once, and the table header repeats roughly
   once per screen. A blank line separates samples. Empty samples have a timestamp
   and a short status message. Redirected irqtop uses the same text format.
@@ -79,12 +80,16 @@ rate within each section; irqstat sorts by IRQ. All CPUs are included.
   include matching rows below the display threshold. They are separate counts,
   not packet rates or a one-to-one hardware/softirq correspondence.
 - `intr/s`: interrupts per second, using monotonic elapsed time.
-- Following lines show non-zero per-CPU rates for that IRQ. The detail grid uses
+- Following lines show per-CPU rates strictly above the threshold for that IRQ.
+  Each IRQ total still includes every CPU, including hidden CPU details. The grid uses
   as many complete columns as fit the available width. For usual values irqtop
   fits four CPU columns at 80 characters and six at 120; larger values use fewer.
-- The settings line reads `interval 1.007s | rate >= 200/s`.
-  The default view hides sources below `200/s`; use `-z` for non-zero sources,
-  or `-m 0` to include idle sources.
+- The settings line reads `interval 1.007s | CPU rate > 200/s`.
+  A source is hidden if every CPU is at or below `200/s`, regardless of its total.
+  With a `200/s` threshold, CPU rates `150 + 150` hide the source; `350 + 80`
+  show only the `350/s` CPU while retaining the `430/s` IRQ total.
+  Comparison uses unrounded rates, including with `-d`. Use `-z` for non-zero
+  CPU activity, or `-m 0` to disable filtering and include idle sources (`rate off`).
 
 irqtop: **q** quit; **arrows/j/k** scroll; **PgUp/PgDn** page;
 **a** show all hardware IRQs and all softirqs, clearing any interface selection;
@@ -216,9 +221,9 @@ ln -sfn irqtop target/release/irqstat
 ./target/release/irqstat -n 1 5
 ```
 
-Only one binary is compiled. When packaging a release, include the `irqtop`
-executable and the `irqstat -> irqtop` link together in a tar archive so the
-relative link is preserved.
+Only one binary is compiled. The command name `irqstat` selects the plain
+statistics mode; other names, including the architecture-specific download
+names below, select irqtop mode.
 
 ## GitHub Actions builds
 
@@ -226,37 +231,31 @@ The `Build irqtop` workflow builds static Linux executables with musl, Rust
 1.96.0 and cross 0.2.5. It runs on changes to `irqtop/` or the workflow, on
 `irqtop-v*` tags, and manually from Actions > Build irqtop > Run workflow.
 
-| Artifact architecture | Rust target |
+| Download | Rust target |
 | --- | --- |
-| arm (32-bit ARMv7, hard-float) | `armv7-unknown-linux-musleabihf` |
-| arm64 | `aarch64-unknown-linux-musl` |
-| x86_64 | `x86_64-unknown-linux-musl` |
+| `irqtop-linux-arm` (32-bit ARMv7, hard-float) | `armv7-unknown-linux-musleabihf` |
+| `irqtop-linux-arm64` | `aarch64-unknown-linux-musl` |
+| `irqtop-linux-x86_64` | `x86_64-unknown-linux-musl` |
 
 Each job runs unit tests (ARM targets use QEMU), checks that the executable has
-no ELF interpreter or shared-library dependencies, and uploads a `.tar.gz`
-with a matching `.sha256` file. Download them from the run's Artifacts section;
-artifacts are kept for 30 days. A tag triggers builds, not a GitHub Release.
+no ELF interpreter or shared-library dependencies, and uploads just the static
+executable with `archive: false`. Download the file for your architecture from
+the run's Artifacts section. No archive extraction is needed; the download has
+no irqstat link or README. Artifacts are kept for 30 days.
 
-For example, the x86_64 package is `irqtop-v0.5.1-linux-x86_64-musl.tar.gz`:
+Pushing a tag matching `irqtop-v<VERSION>` publishes a GitHub Release after all
+three architecture builds pass. The tag version must match `Cargo.toml`.
+The release attaches the same three uncompressed executables, available from
+[Releases](https://github.com/calcky/tools/releases) without artifact expiry.
 
-```text
-irqtop-v0.5.1-linux-x86_64-musl/
-  irqtop
-  irqstat -> irqtop
-  README.md
-```
-
-After extracting the downloaded artifact ZIP:
+For x86_64, make the downloaded file executable and run it directly:
 
 ```sh
-sha256sum -c irqtop-v0.5.1-linux-x86_64-musl.tar.gz.sha256
-tar -xzf irqtop-v0.5.1-linux-x86_64-musl.tar.gz
-cd irqtop-v0.5.1-linux-x86_64-musl
-./irqtop -n
-./irqstat -n 1 5
+chmod +x irqtop-linux-x86_64
+./irqtop-linux-x86_64 -n
 ```
 
-Use the package for the target machine's architecture. ARM requires ARMv7
+Use the executable for the target machine's architecture. ARM requires ARMv7
 with hardware floating point; it does not target ARMv6 or soft-float systems.
 
 ## Validation

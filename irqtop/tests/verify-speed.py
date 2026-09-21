@@ -82,7 +82,7 @@ for selectors in [[], ['-a'], ['-n']]:
     assert '\x1b' not in mixed
     assert 'CPU columns' not in mixed and 'Filter' not in mixed
 default = run('0.1', '1')
-assert 'rate >= 200/s' in default
+assert 'CPU rate > 200/s' in default
 assert all(float(row[3]) >= 200 for row in rows(default))
 help_text = run('-h')
 assert '--' not in help_text
@@ -90,7 +90,7 @@ for option in ['-a', '-n', '-s', '-b', '-i', '-m', '-z', '-d', '-h', '-v']:
     assert option in help_text
 for name in ['irqtop', 'irqstat']:
     binary = str(args.root / name)
-    assert subprocess.check_output([binary, '-v'], text=True).strip() == f'{name} 0.5.1'
+    assert subprocess.check_output([binary, '-v'], text=True).strip() == f'{name} 0.5.2'
     invalid = subprocess.run([binary, '--invalid'], capture_output=True, text=True, timeout=3)
     assert invalid.returncode != 0 and invalid.stderr.startswith(f'{name}: '), invalid
 for removed in ['-A', '-N', '-P', '-I', '-t', '-V', '-S', '--all-hard', '--net-hard',

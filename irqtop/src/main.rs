@@ -19,7 +19,7 @@ const HELP: &str = "Usage: irqtop|irqstat [options] [interval [count]]
 Read-only IRQ rates. Both commands sample every second by default.
 The first read is a baseline. irqstat defaults to hardware IRQs only;
 add -s to include softirqs. irqtop shows hardware IRQs and softirqs by default.
-Sources below 200/s are hidden.
+Only CPUs above 200/s are shown; sources without a qualifying CPU are hidden.
 irqtop: refresh in place, one combined IRQ/softirq list with per-CPU grids.
 
   -a               All hardware IRQs; all softirqs when enabled (default)
@@ -27,7 +27,7 @@ irqtop: refresh in place, one combined IRQ/softirq list with per-CPU grids.
   -s               Include softirqs in irqstat (already enabled in irqtop)
   -b               Include host-wide per-CPU softnet statistics
   -i NIC[,NIC]     Select interfaces or PF/vfN labels; implies -n
-  -m RATE          Minimum total rate per source (default: 200/s)
+  -m RATE          Show CPUs strictly above RATE/s (default: 200; 0 disables)
   -z               Show all non-zero sources (-m 0 also includes idle)
   -d               Show counts per interval instead of rates
   -h               Show help
@@ -516,6 +516,7 @@ struct Frame {
     cpu_count: usize,
     elapsed: f64,
     min_rate: f64,
+    include_idle: bool,
     unit: &'static str,
     softnet: Option<softnet::Report>,
 }
@@ -526,7 +527,18 @@ struct DisplayRow {
     domain: Domain,
     value: String,
     cpus: Vec<(u32, String)>,
+    active_cpus: usize,
     peak_cpus: BTreeSet<u32>,
+}
+
+impl Frame {
+    fn rate_filter(&self) -> String {
+        if self.include_idle {
+            "rate off".into()
+        } else {
+            format!("CPU rate > {}/s", self.min_rate)
+        }
+    }
 }
 
 fn fit(text: &str, width: usize) -> String {
@@ -613,8 +625,8 @@ fn frame(o: &Options, old: Option<&Snapshot>, new: &Snapshot, elapsed: f64, widt
     };
     let mut entries = Vec::new();
     for (_key, row, devices, counts, total) in &rows {
-        let total_rate = *total as f64 / elapsed;
-        if total_rate < o.min_rate || (o.zero && *total == 0) {
+        let peak = counts.iter().copied().max().unwrap_or(0);
+        if (o.min_rate > 0.0 && peak as f64 / elapsed <= o.min_rate) || (o.zero && *total == 0) {
             continue;
         }
         let source = if row.domain == Domain::Soft {
@@ -628,10 +640,9 @@ fn frame(o: &Options, old: Option<&Snapshot>, new: &Snapshot, elapsed: f64, widt
         let cpu_data: Vec<_> = cpus
             .iter()
             .zip(counts.iter())
-            .filter(|(_, n)| **n > 0)
+            .filter(|(_, n)| **n > 0 && **n as f64 / elapsed > o.min_rate)
             .map(|(cpu, n)| (*cpu, value(*n as u128)))
             .collect();
-        let peak = counts.iter().copied().max().unwrap_or(0);
         let peak_cpus = cpus
             .iter()
             .zip(counts.iter())
@@ -644,6 +655,7 @@ fn frame(o: &Options, old: Option<&Snapshot>, new: &Snapshot, elapsed: f64, widt
             domain: row.domain,
             value: row_value,
             cpus: cpu_data,
+            active_cpus: counts.iter().filter(|n| **n > 0).count(),
             peak_cpus,
         });
     }
@@ -679,6 +691,7 @@ fn frame(o: &Options, old: Option<&Snapshot>, new: &Snapshot, elapsed: f64, widt
         cpu_count: cpus.len(),
         elapsed,
         min_rate: o.min_rate,
+        include_idle: o.min_rate == 0.0 && !o.zero,
         unit,
         softnet: o.softnet.then(|| {
             softnet::Report::new(
@@ -1101,33 +1114,63 @@ mod tests {
         assert!(!output.contains("TIMER"));
     }
     #[test]
-    fn threshold_uses_total_rate_even_when_displaying_counts() {
-        let before = parse_domain(
-            "CPU0 CPU1\nNET_RX: 0 0\nNET_TX: 0 0\nTIMER: 0 0\n",
-            Domain::Soft,
-        )
-        .unwrap();
-        let after = parse_domain(
-            "CPU0 CPU1\nNET_RX: 199 201\nNET_TX: 200 199\nTIMER: 0 0\n",
-            Domain::Soft,
-        )
-        .unwrap();
-        for count in [false, true] {
-            let mut o = options(vec!["-n".into(), "-s".into()]).unwrap();
-            o.delta = count;
-            let report = frame(&o, Some(&before), &after, 2.0, 80);
-            assert_eq!(report.entries.len(), 1);
-            assert_eq!(report.entries[0].id, "NET_RX");
-            assert_eq!(
-                report.entries[0].value,
-                if count { "400" } else { "200.00" }
-            );
-            assert_eq!(report.min_rate, 200.0);
-            switch_scope(&mut o, Scope::All);
-            o.min_rate = 0.0;
-            assert_eq!(frame(&o, Some(&before), &after, 2.0, 80).entries.len(), 3);
-            o.zero = true;
-            assert_eq!(frame(&o, Some(&before), &after, 2.0, 80).entries.len(), 2);
+    fn threshold_uses_each_cpu_rate_and_keeps_unfiltered_totals() {
+        for domain in [Domain::Hard, Domain::Soft] {
+            let before = parse_domain(
+                "CPU0 CPU4 CPU63\n24: 0 0 0\n25: 0 0 0\n26: 0 0 0\n27: 0 0 0\n",
+                domain,
+            )
+            .unwrap();
+            let after = parse_domain(
+                "CPU0 CPU4 CPU63\n24: 399 400 399\n25: 160 700 0\n26: 401 400 401\n27: 0 0 0\n",
+                domain,
+            )
+            .unwrap();
+            for count in [false, true] {
+                let mut o = options(vec!["-s".into()]).unwrap();
+                o.delta = count;
+                let report = frame(&o, Some(&before), &after, 2.0, 80);
+                assert_eq!(
+                    report
+                        .entries
+                        .iter()
+                        .map(|r| r.id.as_str())
+                        .collect::<Vec<_>>(),
+                    ["25", "26"]
+                );
+                assert_eq!(
+                    report.entries[0].value,
+                    if count { "860" } else { "430.00" }
+                );
+                assert_eq!(
+                    report.entries[0].cpus,
+                    vec![(4, if count { "700" } else { "350.00" }.into())]
+                );
+                assert_eq!(report.entries[0].peak_cpus, BTreeSet::from([4]));
+                assert_eq!(
+                    report.entries[1].value,
+                    if count { "1202" } else { "601.00" }
+                );
+                assert_eq!(
+                    report.entries[1]
+                        .cpus
+                        .iter()
+                        .map(|(cpu, _)| *cpu)
+                        .collect::<Vec<_>>(),
+                    [0, 63]
+                );
+                assert_eq!(report.entries[1].peak_cpus, BTreeSet::from([0, 63]));
+                assert_eq!(report.matched, 4);
+                assert_eq!(report.active, 3);
+                assert_eq!(
+                    report.totals.iter().find(|t| t.0 == domain).unwrap().1,
+                    if count { "3260" } else { "1630.00" }
+                );
+                o.min_rate = 0.0;
+                assert_eq!(frame(&o, Some(&before), &after, 2.0, 80).entries.len(), 4);
+                o.zero = true;
+                assert_eq!(frame(&o, Some(&before), &after, 2.0, 80).entries.len(), 3);
+            }
         }
     }
 
