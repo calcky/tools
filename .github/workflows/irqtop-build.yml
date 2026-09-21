@@ -1,0 +1,106 @@
+name: Build irqtop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "irqtop/**"
+      - ".github/workflows/irqtop-build.yml"
+    tags:
+      - "irqtop-v*"
+  pull_request:
+    paths:
+      - "irqtop/**"
+      - ".github/workflows/irqtop-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (static musl)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            target: armv7-unknown-linux-musleabihf
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C target-feature=+crt-static"
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross 0.2.5
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+            --output cross.tar.gz
+          echo 'a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588  cross.tar.gz' | sha256sum --check
+          mkdir -p cross-bin
+          tar -xzf cross.tar.gz -C cross-bin
+          echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
+
+      - name: Run unit tests
+        working-directory: irqtop
+        run: cross test --locked --target "$TARGET"
+
+      - name: Build static executable
+        working-directory: irqtop
+        run: cross build --release --locked --target "$TARGET"
+
+      - name: Smoke test executable
+        working-directory: irqtop
+        run: cross run --release --locked --target "$TARGET" -- -v
+
+      - name: Verify static linkage and package
+        run: |
+          binary="irqtop/target/$TARGET/release/irqtop"
+          readelf -lW "$binary" > "$RUNNER_TEMP/elf-program-headers.txt"
+          readelf -dW "$binary" > "$RUNNER_TEMP/elf-dynamic-section.txt"
+          if grep -E 'INTERP' "$RUNNER_TEMP/elf-program-headers.txt" || \
+             grep -E '\(NEEDED\)' "$RUNNER_TEMP/elf-dynamic-section.txt"; then
+            echo 'Expected a static executable without an interpreter or shared library dependencies.' >&2
+            exit 1
+          fi
+          file "$binary"
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("irqtop/Cargo.toml", "rb"))["package"]["version"])')
+          package="irqtop-v${version}-linux-${ARCH}-musl"
+          mkdir -p "dist/$package"
+          install -m 755 "$binary" "dist/$package/irqtop"
+          ln -s irqtop "dist/$package/irqstat"
+          install -m 644 irqtop/README.md "dist/$package/README.md"
+          tar -czf "dist/$package.tar.gz" -C dist "$package"
+          cd dist
+          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: irqtop-linux-${{ matrix.arch }}-musl
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
