@@ -407,14 +407,6 @@ GitHub Release after all three architectures pass; VERSION must match
 `netping/Cargo.toml`. Keep the package entry in Cargo.lock in sync when bumping
 the version, then commit the change before tagging.
 
-For the initial release, from the repository root:
-
-```sh
-git push origin master
-git tag -a netping-v0.1.0 -m "netping v0.1.0"
-git push origin netping-v0.1.0
-```
-
 Release assets are raw executables: `netping-linux-arm`, `netping-linux-arm64`
 and `netping-linux-x86_64`. Download the appropriate file, mark it executable
 with `chmod +x`, and run it directly. There is no archive or runtime to install.
