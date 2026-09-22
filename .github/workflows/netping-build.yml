@@ -1,0 +1,133 @@
+name: Build netping
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "netping/**"
+      - ".github/workflows/netping-build.yml"
+    tags:
+      - "netping-v*"
+  pull_request:
+    paths:
+      - "netping/**"
+      - ".github/workflows/netping-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (static musl)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            target: armv7-unknown-linux-musleabihf
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C target-feature=+crt-static"
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross 0.2.5
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+            --output cross.tar.gz
+          echo 'a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588  cross.tar.gz' | sha256sum --check
+          mkdir -p cross-bin
+          tar -xzf cross.tar.gz -C cross-bin
+          echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
+
+      - name: Run unit tests
+        working-directory: netping
+        run: cross test --locked --target "$TARGET"
+
+      - name: Build static executable
+        working-directory: netping
+        run: cross build --release --locked --target "$TARGET"
+
+      - name: Smoke test executable
+        working-directory: netping
+        run: cross run --release --locked --target "$TARGET" -- -v
+
+      - name: Verify static linkage and prepare executable
+        run: |
+          binary="netping/target/$TARGET/release/netping"
+          readelf -lW "$binary" > "$RUNNER_TEMP/elf-program-headers.txt"
+          readelf -dW "$binary" > "$RUNNER_TEMP/elf-dynamic-section.txt"
+          if grep -E 'INTERP' "$RUNNER_TEMP/elf-program-headers.txt" || \
+             grep -E '\(NEEDED\)' "$RUNNER_TEMP/elf-dynamic-section.txt"; then
+            echo 'Expected a static executable without an interpreter or shared library dependencies.' >&2
+            exit 1
+          fi
+          file "$binary"
+          install -D -m 755 "$binary" "dist/netping-linux-$ARCH"
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          path: dist/netping-linux-${{ matrix.arch }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/netping-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check release version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("netping/Cargo.toml", "rb"))["package"]["version"])')
+          test "$RELEASE_TAG" = "netping-v$version"
+
+      - name: Download executables
+        uses: actions/download-artifact@v8
+        with:
+          pattern: netping-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish executables
+        run: |
+          for arch in arm arm64 x86_64; do
+            test -s "dist/netping-linux-$arch"
+          done
+          gh release create "$RELEASE_TAG" \
+            dist/netping-linux-arm dist/netping-linux-arm64 dist/netping-linux-x86_64 \
+            --draft --verify-tag --title "netping ${RELEASE_TAG#netping-}" --generate-notes
+          gh release edit "$RELEASE_TAG" --draft=false

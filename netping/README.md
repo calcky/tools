@@ -397,3 +397,24 @@ RUSTUP_TOOLCHAIN=1.96.0 RUSTFLAGS='-C target-feature=+crt-static' \
 Other targets: `aarch64-unknown-linux-musl` and
 `armv7-unknown-linux-musleabihf` (ARMv7 with hardware floating point).
 Run `cross test` and `cross run --release ... -- -v` for each target too.
+
+## Releases
+
+The `Build netping` GitHub Actions workflow tests and builds static Linux
+executables for ARMv7, ARM64 and x86_64. Branch/PR builds and manual runs
+provide downloadable artifacts. A pushed `netping-vVERSION` tag publishes a
+GitHub Release after all three architectures pass; VERSION must match
+`netping/Cargo.toml`. Keep the package entry in Cargo.lock in sync when bumping
+the version, then commit the change before tagging.
+
+For the initial release, from the repository root:
+
+```sh
+git push origin master
+git tag -a netping-v0.1.0 -m "netping v0.1.0"
+git push origin netping-v0.1.0
+```
+
+Release assets are raw executables: `netping-linux-arm`, `netping-linux-arm64`
+and `netping-linux-x86_64`. Download the appropriate file, mark it executable
+with `chmod +x`, and run it directly. There is no archive or runtime to install.
