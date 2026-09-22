@@ -1,0 +1,19 @@
+[package]
+name = "netping"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[dependencies]
+socket2 = { version = "0.6", features = ["all"] }
+mio = { version = "1", features = ["os-poll", "os-ext"] }
+pnet_packet = "0.35"
+hdrhistogram = { version = "7", default-features = false }
+ctrlc = { version = "3", features = ["termination"] }
+libc = "0.2"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+
+[profile.release]
+lto = true
+strip = true
