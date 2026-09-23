@@ -64,7 +64,14 @@ jobs:
           tar -xzf cross.tar.gz -C cross-bin
           echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
 
-      - name: Run unit tests
+      # The integration suite launches ARM CLI subprocesses from the QEMU test runner.
+      - name: Enable ARM subprocess execution
+        if: matrix.arch != 'x86_64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm,arm64
+
+      - name: Run unit and integration tests
         working-directory: flowgen
         run: cross test --locked --target "$TARGET"
 

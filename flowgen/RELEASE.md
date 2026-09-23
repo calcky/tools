@@ -1,5 +1,9 @@
 Initial release of flowgen, a Linux TCP/UDP session-load generator with a paired server.
 
+The v0.1.0 build stopped before publication because the ARM integration-test
+environment could not launch emulated child processes. This release registers
+QEMU interpreters so the complete test suite can run on all three targets.
+
 - Fixed session count with paced warmup, or continuous session replacement at a configured rate.
 - Per-session request pacing and equal-length responses, with multi-worker and multi-source-IP support.
 - RTT, jitter, timeout, duplicate, late and reordered response accounting.
