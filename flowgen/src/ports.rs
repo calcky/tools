@@ -680,10 +680,20 @@ mod tests {
                 .trim()
                 .parse()
                 .unwrap();
+            let mut inherited = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut inherited) },
+                0
+            );
+            // A container can inherit a hard limit below the kernel ceiling.
+            let available = ceiling.min(inherited.rlim_max);
             let original = match case.as_str() {
                 "system-max" => libc::rlimit {
                     rlim_cur: 1024,
-                    rlim_max: ceiling,
+                    rlim_max: available,
                 },
                 "raise-soft" => libc::rlimit {
                     rlim_cur: 1024,

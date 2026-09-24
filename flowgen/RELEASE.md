@@ -1,4 +1,8 @@
-flowgen v0.1.2 improves unattended TCP/UDP load generation and startup defaults.
+flowgen v0.1.3 improves unattended TCP/UDP load generation and startup defaults.
+
+The v0.1.2 build stopped before publication because the file-limit test assumed
+the container's hard limit matched the kernel ceiling. The test now respects
+the inherited hard limit, including restricted CI containers.
 
 - `-T 0` and `-T0` run continuously after warmup until Ctrl+C or SIGTERM. Request timeouts, graceful draining, final statistics and recordings still apply. Upgrade both client and server to use unlimited runs.
 - The server no longer prints periodic statistics by default. Use `flowgen -s --stats` to enable one-second aggregate reports.
