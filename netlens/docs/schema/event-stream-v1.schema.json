@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nwdiag.local/schema/event-stream-v1.schema.json",
+  "title": "nwdiag event stream v1 record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "recordType",
+    "sequence",
+    "provider",
+    "layer",
+    "descriptor",
+    "eventType",
+    "monotonicNs",
+    "attributes"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordType": { "const": "observation" },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "provider": { "const": "linux.tracepoint.kfree_skb" },
+    "layer": { "$ref": "#/$defs/nullableLayer" },
+    "descriptor": { "$ref": "#/$defs/observationDescriptor" },
+    "eventType": { "const": "linux.skb.free" },
+    "monotonicNs": { "$ref": "#/$defs/u64" },
+    "attributes": { "$ref": "#/$defs/skbFreeAttributes" }
+  },
+  "$defs": {
+    "u16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "namespacedName": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"
+    },
+    "layer": {
+      "enum": [
+        "socket",
+        "transport",
+        "netfilter",
+        "route",
+        "virtual_device",
+        "tc",
+        "netdevice",
+        "xdp",
+        "driver",
+        "nic",
+        "kernel_bypass"
+      ]
+    },
+    "nullableLayer": {
+      "oneOf": [
+        { "$ref": "#/$defs/layer" },
+        { "type": "null" }
+      ]
+    },
+    "hookRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "name"],
+      "properties": {
+        "family": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      }
+    },
+    "evidenceContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "networkNamespace",
+        "ingressIfindex",
+        "egressIfindex",
+        "queueId",
+        "cpu",
+        "protocol"
+      ],
+      "properties": {
+        "networkNamespace": { "type": ["string", "null"] },
+        "ingressIfindex": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "egressIfindex": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "queueId": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "cpu": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "protocol": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "signal"],
+      "properties": {
+        "disposition": {
+          "enum": [
+            "dropped",
+            "rejected",
+            "consumed",
+            "passed",
+            "redirected",
+            "queued",
+            null
+          ]
+        },
+        "signal": {
+          "enum": [
+            "aborted",
+            "redirect_failed",
+            "backpressure",
+            "congestion",
+            "pressure",
+            "timeout",
+            "retransmission",
+            "reset",
+            "error",
+            null
+          ]
+        }
+      }
+    },
+    "measurementDomain": {
+      "enum": [
+        "wire_frame",
+        "interface_packet",
+        "xdp_frame",
+        "skb",
+        "gro_aggregate",
+        "gso_super_packet",
+        "l3_packet",
+        "datagram",
+        "tcp_segment",
+        "socket_message",
+        "policy_hit",
+        "queue_entry",
+        "connection",
+        "interrupt",
+        "poll_cycle"
+      ]
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "domain", "scope", "bound"],
+      "properties": {
+        "unit": { "enum": ["occurrences", "bytes", "nanoseconds"] },
+        "domain": {
+          "oneOf": [
+            { "$ref": "#/$defs/measurementDomain" },
+            { "type": "null" }
+          ]
+        },
+        "scope": {
+          "enum": [
+            "event",
+            "flow",
+            "socket",
+            "cpu",
+            "queue",
+            "interface",
+            "network_namespace",
+            "host",
+            null
+          ]
+        },
+        "bound": { "enum": ["exact", "lower_bound", "estimate", null] }
+      }
+    },
+    "evidenceDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "hook",
+        "direction",
+        "pathRole",
+        "context",
+        "outcome",
+        "form",
+        "role",
+        "measurement"
+      ],
+      "properties": {
+        "stage": {
+          "oneOf": [
+            { "$ref": "#/$defs/namespacedName" },
+            { "type": "null" }
+          ]
+        },
+        "hook": {
+          "oneOf": [
+            { "$ref": "#/$defs/hookRef" },
+            { "type": "null" }
+          ]
+        },
+        "direction": { "enum": ["ingress", "egress", null] },
+        "pathRole": {
+          "enum": ["local_input", "local_output", "l3_forward", "l2_forward", null]
+        },
+        "context": { "$ref": "#/$defs/evidenceContext" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "form": { "const": "event" },
+        "role": { "enum": ["causal", "symptom", "context", "telemetry"] },
+        "measurement": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "observationDescriptor": {
+      "$ref": "#/$defs/evidenceDescriptor"
+    },
+    "reasonCodeAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "reasonNameAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z0-9_]+$"
+        }
+      }
+    },
+    "sourceModeAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": { "enum": ["legacy_perf", "reason_ring"] }
+      }
+    },
+    "skbFreeAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "required": ["linux.skb_free.source_mode"],
+      "dependentRequired": {
+        "linux.skb_free.reason_name": ["linux.skb_free.reason_code"]
+      },
+      "properties": {
+        "linux.skb_free.reason_code": { "$ref": "#/$defs/reasonCodeAttribute" },
+        "linux.skb_free.reason_name": { "$ref": "#/$defs/reasonNameAttribute" },
+        "linux.skb_free.source_mode": { "$ref": "#/$defs/sourceModeAttribute" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "linux.skb_free.source_mode": {
+                "properties": { "value": { "const": "reason_ring" } }
+              }
+            }
+          },
+          "then": { "required": ["linux.skb_free.reason_code"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "linux.skb_free.source_mode": {
+                "properties": { "value": { "const": "legacy_perf" } }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["linux.skb_free.reason_code"] },
+                { "required": ["linux.skb_free.reason_name"] }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

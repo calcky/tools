@@ -1,0 +1,1370 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nwdiag.local/schema/report-v2.schema.json",
+  "title": "nwdiag report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "window",
+    "scope",
+    "capabilities",
+    "subjects",
+    "metrics",
+    "observations",
+    "findings",
+    "telemetry"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "window": { "$ref": "#/$defs/captureWindow" },
+    "scope": { "$ref": "#/$defs/captureScope" },
+    "capabilities": { "$ref": "#/$defs/capabilityReport" },
+    "subjects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/subject" }
+    },
+    "metrics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/metricDelta" }
+    },
+    "observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "telemetry": { "$ref": "#/$defs/telemetry" }
+  },
+  "$defs": {
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "u16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "nullableU64": {
+      "oneOf": [
+        { "$ref": "#/$defs/u64" },
+        { "type": "null" }
+      ]
+    },
+    "namespacedName": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^e_[0-9a-f]{32}_[1-9][0-9]*$"
+    },
+    "subjectId": {
+      "type": "string",
+      "pattern": "^s_[0-9a-f]{32}_[1-9][0-9]*$"
+    },
+    "providerName": {
+      "enum": [
+        "linux.proc.protocol_counters",
+        "linux.proc.softnet_counters",
+        "linux.link.counters",
+        "linux.tracepoint.kfree_skb",
+        "nwdiag.core"
+      ]
+    },
+    "metricProviderName": {
+      "enum": [
+        "linux.proc.protocol_counters",
+        "linux.proc.softnet_counters",
+        "linux.link.counters"
+      ]
+    },
+    "layer": {
+      "enum": [
+        "socket",
+        "transport",
+        "netfilter",
+        "route",
+        "virtual_device",
+        "tc",
+        "netdevice",
+        "xdp",
+        "driver",
+        "nic",
+        "kernel_bypass"
+      ]
+    },
+    "nullableLayer": {
+      "oneOf": [
+        { "$ref": "#/$defs/layer" },
+        { "type": "null" }
+      ]
+    },
+    "bpfMode": {
+      "enum": ["counter_only", "legacy_perf", "reason_ring"]
+    },
+    "captureWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAtUnixMs", "durationMs"],
+      "properties": {
+        "startedAtUnixMs": { "$ref": "#/$defs/u64" },
+        "durationMs": { "$ref": "#/$defs/u64" }
+      }
+    },
+    "interfaceAnchor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "name" },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 15,
+              "pattern": "^[^/\\s\\u0000]+$",
+              "not": { "enum": [".", ".."] }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ifindex"],
+          "properties": {
+            "kind": { "const": "ifindex" },
+            "ifindex": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
+          }
+        }
+      ]
+    },
+    "interfacePath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchor",
+        "resolvedAnchorIfindex",
+        "visibleIfindices",
+        "topologyGaps"
+      ],
+      "properties": {
+        "anchor": { "$ref": "#/$defs/interfaceAnchor" },
+        "resolvedAnchorIfindex": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            { "type": "null" }
+          ]
+        },
+        "visibleIfindices": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "topologyGaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "anchor_unresolved",
+              "dynamic_redirect",
+              "cross_namespace",
+              "hardware_offload",
+              "lower_device_unresolved",
+              "tunnel_unresolved"
+            ]
+          }
+        }
+      }
+    },
+    "currentNetworkNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity"],
+      "properties": {
+        "identity": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "nullableDirection": {
+      "enum": ["ingress", "egress", null]
+    },
+    "nullableIpAddress": {
+      "anyOf": [
+        { "type": "string", "format": "ipv4" },
+        { "type": "string", "format": "ipv6" },
+        { "type": "null" }
+      ]
+    },
+    "flowFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "sourceAddress",
+        "destinationAddress",
+        "sourcePort",
+        "destinationPort"
+      ],
+      "properties": {
+        "protocol": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "sourceAddress": { "$ref": "#/$defs/nullableIpAddress" },
+        "destinationAddress": { "$ref": "#/$defs/nullableIpAddress" },
+        "sourcePort": {
+          "oneOf": [
+            { "$ref": "#/$defs/u16" },
+            { "type": "null" }
+          ]
+        },
+        "destinationPort": {
+          "oneOf": [
+            { "$ref": "#/$defs/u16" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "requestedScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layers", "networkNamespace", "interfacePath", "direction", "flow"],
+      "properties": {
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/layer" }
+        },
+        "networkNamespace": { "$ref": "#/$defs/currentNetworkNamespace" },
+        "interfacePath": {
+          "oneOf": [
+            { "$ref": "#/$defs/interfacePath" },
+            { "type": "null" }
+          ]
+        },
+        "direction": { "$ref": "#/$defs/nullableDirection" },
+        "flow": { "$ref": "#/$defs/flowFilter" }
+      }
+    },
+    "effectiveNetworkNamespace": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent", "identity"],
+          "properties": {
+            "extent": { "const": "current" },
+            "identity": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[ -~]+$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent"],
+          "properties": { "extent": { "const": "host_wide" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent"],
+          "properties": { "extent": { "const": "unknown" } }
+        }
+      ]
+    },
+    "effectiveInterfaceScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent"],
+          "properties": { "extent": { "const": "all_visible" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent", "path"],
+          "properties": {
+            "extent": { "const": "path" },
+            "path": { "$ref": "#/$defs/interfacePath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extent"],
+          "properties": { "extent": { "const": "unknown" } }
+        }
+      ]
+    },
+    "effectiveScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layers", "networkNamespace", "interfaceScope", "direction", "flow"],
+      "properties": {
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/layer" }
+        },
+        "networkNamespace": { "$ref": "#/$defs/effectiveNetworkNamespace" },
+        "interfaceScope": { "$ref": "#/$defs/effectiveInterfaceScope" },
+        "direction": { "$ref": "#/$defs/nullableDirection" },
+        "flow": { "$ref": "#/$defs/flowFilter" }
+      }
+    },
+    "filterSupport": {
+      "enum": ["kernel_exact", "userspace_exact", "broader_only", "unsupported"]
+    },
+    "providerFilterSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layers",
+        "networkNamespace",
+        "interfacePath",
+        "direction",
+        "protocol",
+        "sourceAddress",
+        "destinationAddress",
+        "sourcePort",
+        "destinationPort"
+      ],
+      "properties": {
+        "layers": { "$ref": "#/$defs/filterSupport" },
+        "networkNamespace": { "$ref": "#/$defs/filterSupport" },
+        "interfacePath": { "$ref": "#/$defs/filterSupport" },
+        "direction": { "$ref": "#/$defs/filterSupport" },
+        "protocol": { "$ref": "#/$defs/filterSupport" },
+        "sourceAddress": { "$ref": "#/$defs/filterSupport" },
+        "destinationAddress": { "$ref": "#/$defs/filterSupport" },
+        "sourcePort": { "$ref": "#/$defs/filterSupport" },
+        "destinationPort": { "$ref": "#/$defs/filterSupport" }
+      }
+    },
+    "providerScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "requested", "effective", "filterSupport"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/providerName" },
+        "requested": { "$ref": "#/$defs/requestedScope" },
+        "effective": {
+          "oneOf": [
+            { "$ref": "#/$defs/effectiveScope" },
+            { "type": "null" }
+          ]
+        },
+        "filterSupport": { "$ref": "#/$defs/providerFilterSupport" }
+      }
+    },
+    "captureScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "providers"],
+      "properties": {
+        "requested": { "$ref": "#/$defs/requestedScope" },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/providerScope" }
+        }
+      }
+    },
+    "tracepointCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "hasDropReason", "layout", "formatPath"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "hasDropReason": { "type": "boolean" },
+        "layout": {
+          "enum": ["legacy", "reason", "reason_with_rx_sk", "unsupported", null]
+        },
+        "formatPath": { "type": ["string", "null"] }
+      }
+    },
+    "providerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "state", "detail"],
+      "properties": {
+        "name": { "type": "string" },
+        "state": { "enum": ["available", "degraded", "unavailable"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "evidenceForm": {
+      "enum": ["event", "counter_delta", "gauge", "inventory"]
+    },
+    "layerCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layer",
+        "availability",
+        "visibility",
+        "forms",
+        "filterSupport",
+        "integrity",
+        "sources",
+        "limitations"
+      ],
+      "properties": {
+        "layer": { "$ref": "#/$defs/layer" },
+        "availability": { "enum": ["active", "degraded", "error", "unsupported"] },
+        "visibility": { "enum": ["full_for_declared_scope", "partial", "unknown"] },
+        "forms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidenceForm" },
+          "uniqueItems": true
+        },
+        "filterSupport": {
+          "enum": ["kernel_exact", "userspace_exact", "broader_only", "unsupported"]
+        },
+        "integrity": { "enum": ["complete", "sampled", "loss_detected", "unknown"] },
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "capabilityReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kernelRelease",
+        "effectiveUid",
+        "hasKernelBtf",
+        "tracefsPath",
+        "kfreeSkb",
+        "selectedBpfMode",
+        "providers",
+        "coverage"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "kernelRelease": { "type": ["string", "null"] },
+        "effectiveUid": { "$ref": "#/$defs/u32" },
+        "hasKernelBtf": { "type": "boolean" },
+        "tracefsPath": { "type": ["string", "null"] },
+        "kfreeSkb": { "$ref": "#/$defs/tracepointCapability" },
+        "selectedBpfMode": { "$ref": "#/$defs/bpfMode" },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/providerStatus" }
+        },
+        "coverage": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/layerCoverage" }
+        }
+      }
+    },
+    "stageId": {
+      "$ref": "#/$defs/namespacedName"
+    },
+    "hookRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "name"],
+      "properties": {
+        "family": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      }
+    },
+    "evidenceContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "networkNamespace",
+        "ingressIfindex",
+        "egressIfindex",
+        "queueId",
+        "cpu",
+        "protocol"
+      ],
+      "properties": {
+        "networkNamespace": { "type": ["string", "null"] },
+        "ingressIfindex": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "egressIfindex": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "queueId": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "cpu": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "protocol": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "signal"],
+      "properties": {
+        "disposition": {
+          "enum": ["dropped", "rejected", "consumed", "passed", "redirected", "queued", null]
+        },
+        "signal": {
+          "enum": [
+            "aborted",
+            "redirect_failed",
+            "backpressure",
+            "congestion",
+            "pressure",
+            "timeout",
+            "retransmission",
+            "reset",
+            "error",
+            null
+          ]
+        }
+      }
+    },
+    "measurementDomain": {
+      "enum": [
+        "wire_frame",
+        "interface_packet",
+        "xdp_frame",
+        "skb",
+        "gro_aggregate",
+        "gso_super_packet",
+        "l3_packet",
+        "datagram",
+        "tcp_segment",
+        "socket_message",
+        "policy_hit",
+        "queue_entry",
+        "connection",
+        "interrupt",
+        "poll_cycle"
+      ]
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "domain", "scope", "bound"],
+      "properties": {
+        "unit": { "enum": ["occurrences", "bytes", "nanoseconds"] },
+        "domain": {
+          "oneOf": [
+            { "$ref": "#/$defs/measurementDomain" },
+            { "type": "null" }
+          ]
+        },
+        "scope": {
+          "enum": ["event", "flow", "socket", "cpu", "queue", "interface", "network_namespace", "host", null]
+        },
+        "bound": { "enum": ["exact", "lower_bound", "estimate", null] }
+      }
+    },
+    "evidenceDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "hook",
+        "direction",
+        "pathRole",
+        "context",
+        "outcome",
+        "form",
+        "role",
+        "measurement"
+      ],
+      "properties": {
+        "stage": {
+          "oneOf": [
+            { "$ref": "#/$defs/stageId" },
+            { "type": "null" }
+          ]
+        },
+        "hook": {
+          "oneOf": [
+            { "$ref": "#/$defs/hookRef" },
+            { "type": "null" }
+          ]
+        },
+        "direction": { "enum": ["ingress", "egress", null] },
+        "pathRole": { "enum": ["local_input", "local_output", "l3_forward", "l2_forward", null] },
+        "context": { "$ref": "#/$defs/evidenceContext" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "form": { "$ref": "#/$defs/evidenceForm" },
+        "role": { "enum": ["causal", "symptom", "context", "telemetry"] },
+        "measurement": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "metricDescriptor": {
+      "allOf": [
+        { "$ref": "#/$defs/evidenceDescriptor" },
+        {
+          "type": "object",
+          "properties": { "form": { "const": "counter_delta" } }
+        }
+      ]
+    },
+    "observationDescriptor": {
+      "allOf": [
+        { "$ref": "#/$defs/evidenceDescriptor" },
+        {
+          "type": "object",
+          "properties": { "form": { "const": "event" } }
+        }
+      ]
+    },
+    "attributeString": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "attributeUnsigned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "$ref": "#/$defs/u64" }
+      }
+    },
+    "attributeBoolean": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "boolean" },
+        "value": { "type": "boolean" }
+      }
+    },
+    "attributeValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/attributeString" },
+        { "$ref": "#/$defs/attributeUnsigned" },
+        { "$ref": "#/$defs/attributeBoolean" }
+      ]
+    },
+    "interfaceNameAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15,
+          "pattern": "^[^/\\s\\u0000]+$",
+          "not": { "enum": [".", ".."] }
+        }
+      }
+    },
+    "ifindexAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+      }
+    },
+    "queueIdAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "networkNamespaceAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "counterBitsAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "enum": [32, 64] }
+      }
+    },
+    "cpuRowAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "reasonCodeAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "unsigned" },
+        "value": { "$ref": "#/$defs/u32" }
+      }
+    },
+    "reasonNameAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z0-9_]+$"
+        }
+      }
+    },
+    "bpfModeAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "string" },
+        "value": { "$ref": "#/$defs/bpfMode" }
+      }
+    },
+    "genericAttributes": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": { "$ref": "#/$defs/namespacedName" },
+      "additionalProperties": { "$ref": "#/$defs/attributeValue" }
+    },
+    "emptyAttributes": {
+      "type": "object",
+      "maxProperties": 0,
+      "additionalProperties": false
+    },
+    "protocolMetricAttributes": {
+      "$ref": "#/$defs/emptyAttributes"
+    },
+    "softnetMetricAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.cpu.row": { "$ref": "#/$defs/cpuRowAttribute" }
+      }
+    },
+    "linkMetricAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.interface.name": { "$ref": "#/$defs/interfaceNameAttribute" },
+        "linux.counter.bits": { "$ref": "#/$defs/counterBitsAttribute" }
+      }
+    },
+    "skbFreeObservationAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "required": ["linux.skb_free.source_mode"],
+      "dependentRequired": {
+        "linux.skb_free.reason_name": ["linux.skb_free.reason_code"]
+      },
+      "properties": {
+        "linux.skb_free.reason_code": { "$ref": "#/$defs/reasonCodeAttribute" },
+        "linux.skb_free.reason_name": { "$ref": "#/$defs/reasonNameAttribute" },
+        "linux.skb_free.source_mode": { "$ref": "#/$defs/bpfModeAttribute" }
+      }
+    },
+    "interfaceSubjectAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.interface.name": { "$ref": "#/$defs/interfaceNameAttribute" },
+        "linux.interface.ifindex": { "$ref": "#/$defs/ifindexAttribute" },
+        "linux.network_namespace.id": { "$ref": "#/$defs/networkNamespaceAttribute" }
+      }
+    },
+    "linkQueueSubjectAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.interface.ifindex": { "$ref": "#/$defs/ifindexAttribute" },
+        "linux.network_namespace.id": { "$ref": "#/$defs/networkNamespaceAttribute" }
+      }
+    },
+    "coreQueueSubjectAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.interface.ifindex": { "$ref": "#/$defs/ifindexAttribute" },
+        "linux.queue.id": { "$ref": "#/$defs/queueIdAttribute" },
+        "linux.network_namespace.id": { "$ref": "#/$defs/networkNamespaceAttribute" }
+      }
+    },
+    "namespaceSubjectAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "properties": {
+        "linux.network_namespace.id": { "$ref": "#/$defs/networkNamespaceAttribute" }
+      }
+    },
+    "subjectKind": {
+      "enum": ["socket", "rule", "program", "queue", "interface", "hop", "flow_domain"]
+    },
+    "subjectRole": {
+      "enum": ["primary", "ingress", "egress", "owner", "peer", "before", "after"]
+    },
+    "subjectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "id"],
+      "properties": {
+        "role": { "$ref": "#/$defs/subjectRole" },
+        "id": { "$ref": "#/$defs/subjectId" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "kind", "attributes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/subjectId" },
+        "provider": { "$ref": "#/$defs/providerName" },
+        "kind": { "$ref": "#/$defs/subjectKind" },
+        "attributes": { "$ref": "#/$defs/genericAttributes" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "provider": { "const": "linux.link.counters" },
+            "kind": { "enum": ["queue", "interface", "hop"] }
+          },
+          "required": ["provider", "kind"]
+        },
+        {
+          "properties": {
+            "provider": { "const": "nwdiag.core" }
+          },
+          "required": ["provider"]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": { "enum": ["linux.link.counters", "nwdiag.core"] },
+              "kind": { "enum": ["interface", "hop"] }
+            },
+            "required": ["provider", "kind"]
+          },
+          "then": {
+            "properties": {
+              "attributes": { "$ref": "#/$defs/interfaceSubjectAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": { "const": "linux.link.counters" },
+              "kind": { "const": "queue" }
+            },
+            "required": ["provider", "kind"]
+          },
+          "then": {
+            "properties": {
+              "attributes": { "$ref": "#/$defs/linkQueueSubjectAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": { "const": "nwdiag.core" },
+              "kind": { "const": "queue" }
+            },
+            "required": ["provider", "kind"]
+          },
+          "then": {
+            "properties": {
+              "attributes": { "$ref": "#/$defs/coreQueueSubjectAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": { "const": "nwdiag.core" },
+              "kind": { "enum": ["socket", "flow_domain"] }
+            },
+            "required": ["provider", "kind"]
+          },
+          "then": {
+            "properties": {
+              "attributes": { "$ref": "#/$defs/namespaceSubjectAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": { "const": "nwdiag.core" },
+              "kind": { "enum": ["rule", "program"] }
+            },
+            "required": ["provider", "kind"]
+          },
+          "then": {
+            "properties": {
+              "attributes": { "$ref": "#/$defs/emptyAttributes" }
+            }
+          }
+        }
+      ]
+    },
+    "evidenceMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "layer", "descriptor", "subjects"],
+      "properties": {
+        "id": { "$ref": "#/$defs/evidenceId" },
+        "provider": { "$ref": "#/$defs/providerName" },
+        "layer": { "$ref": "#/$defs/nullableLayer" },
+        "descriptor": { "$ref": "#/$defs/evidenceDescriptor" },
+        "subjects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/subjectRef" }
+        }
+      }
+    },
+    "metricMeta": {
+      "allOf": [
+        { "$ref": "#/$defs/evidenceMeta" },
+        {
+          "type": "object",
+          "properties": {
+            "provider": { "$ref": "#/$defs/metricProviderName" },
+            "descriptor": { "$ref": "#/$defs/metricDescriptor" }
+          }
+        }
+      ]
+    },
+    "observationMeta": {
+      "allOf": [
+        { "$ref": "#/$defs/evidenceMeta" },
+        {
+          "type": "object",
+          "properties": {
+            "provider": { "const": "linux.tracepoint.kfree_skb" },
+            "descriptor": { "$ref": "#/$defs/observationDescriptor" }
+          }
+        }
+      ]
+    },
+    "metricValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "delta", "reset"],
+      "properties": {
+        "start": { "$ref": "#/$defs/nullableU64" },
+        "end": { "$ref": "#/$defs/nullableU64" },
+        "delta": { "$ref": "#/$defs/nullableU64" },
+        "reset": { "type": "boolean" }
+      }
+    },
+    "metricDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["meta", "metricType", "values", "attributes"],
+      "properties": {
+        "meta": { "$ref": "#/$defs/metricMeta" },
+        "metricType": { "$ref": "#/$defs/namespacedName" },
+        "values": { "$ref": "#/$defs/metricValues" },
+        "attributes": { "$ref": "#/$defs/genericAttributes" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "meta": {
+                "properties": {
+                  "provider": { "const": "linux.proc.protocol_counters" }
+                },
+                "required": ["provider"]
+              }
+            },
+            "required": ["meta"]
+          },
+          "then": {
+            "properties": {
+              "metricType": { "pattern": "^linux\\.mib\\." },
+              "attributes": { "$ref": "#/$defs/protocolMetricAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "meta": {
+                "properties": {
+                  "provider": { "const": "linux.proc.softnet_counters" }
+                },
+                "required": ["provider"]
+              }
+            },
+            "required": ["meta"]
+          },
+          "then": {
+            "properties": {
+              "metricType": { "pattern": "^linux\\.softnet\\." },
+              "attributes": { "$ref": "#/$defs/softnetMetricAttributes" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "meta": {
+                "properties": {
+                  "provider": { "const": "linux.link.counters" }
+                },
+                "required": ["provider"]
+              }
+            },
+            "required": ["meta"]
+          },
+          "then": {
+            "properties": {
+              "metricType": { "pattern": "^linux\\.link\\." },
+              "attributes": { "$ref": "#/$defs/linkMetricAttributes" }
+            }
+          }
+        }
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["meta", "eventType", "monotonicNs", "attributes"],
+      "properties": {
+        "meta": { "$ref": "#/$defs/observationMeta" },
+        "eventType": { "const": "linux.skb.free" },
+        "monotonicNs": { "$ref": "#/$defs/u64" },
+        "attributes": { "$ref": "#/$defs/skbFreeObservationAttributes" }
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["metric", "observation"] },
+        "id": { "$ref": "#/$defs/evidenceId" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "layer",
+        "descriptor",
+        "severity",
+        "confidence",
+        "title",
+        "summary",
+        "count",
+        "evidence"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/namespacedName" },
+        "layer": { "$ref": "#/$defs/nullableLayer" },
+        "descriptor": { "$ref": "#/$defs/evidenceDescriptor" },
+        "severity": { "enum": ["info", "warning", "critical"] },
+        "confidence": { "enum": ["direct", "correlated", "suspected"] },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "count": { "$ref": "#/$defs/u64" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidenceRef" }
+        }
+      }
+    },
+    "counterStatus": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": { "const": "measured" },
+            "value": { "$ref": "#/$defs/u64" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "const": "not_applicable" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "const": "unknown" }
+          }
+        }
+      ]
+    },
+    "boundedTotal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "bound"],
+      "properties": {
+        "value": { "$ref": "#/$defs/u64" },
+        "bound": { "enum": ["exact", "lower_bound"] }
+      }
+    },
+    "providerBoundaryCounters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bpfEventsSeen",
+        "bpfOutputLost",
+        "transportEventsReceived",
+        "transportEventsLost",
+        "userEventsDropped",
+        "netlinkLossEvents",
+        "netlinkDumpInterruptions",
+        "parseErrors"
+      ],
+      "properties": {
+        "bpfEventsSeen": { "$ref": "#/$defs/counterStatus" },
+        "bpfOutputLost": { "$ref": "#/$defs/counterStatus" },
+        "transportEventsReceived": { "$ref": "#/$defs/counterStatus" },
+        "transportEventsLost": { "$ref": "#/$defs/counterStatus" },
+        "userEventsDropped": { "$ref": "#/$defs/counterStatus" },
+        "netlinkLossEvents": { "$ref": "#/$defs/counterStatus" },
+        "netlinkDumpInterruptions": { "$ref": "#/$defs/counterStatus" },
+        "parseErrors": { "$ref": "#/$defs/counterStatus" }
+      }
+    },
+    "sessionBoundaryTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bpfEventsSeen",
+        "bpfOutputLost",
+        "transportEventsReceived",
+        "transportEventsLost",
+        "userEventsDropped",
+        "netlinkLossEvents",
+        "netlinkDumpInterruptions",
+        "parseErrors"
+      ],
+      "properties": {
+        "bpfEventsSeen": { "$ref": "#/$defs/boundedTotal" },
+        "bpfOutputLost": { "$ref": "#/$defs/boundedTotal" },
+        "transportEventsReceived": { "$ref": "#/$defs/boundedTotal" },
+        "transportEventsLost": { "$ref": "#/$defs/boundedTotal" },
+        "userEventsDropped": { "$ref": "#/$defs/boundedTotal" },
+        "netlinkLossEvents": { "$ref": "#/$defs/boundedTotal" },
+        "netlinkDumpInterruptions": { "$ref": "#/$defs/boundedTotal" },
+        "parseErrors": { "$ref": "#/$defs/boundedTotal" }
+      }
+    },
+    "samplingComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "scope"],
+          "properties": {
+            "mode": { "const": "none" },
+            "scope": { "$ref": "#/$defs/namespacedName" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "method", "scope", "effectiveNumerator", "effectiveDenominator"],
+          "properties": {
+            "mode": { "const": "sampled" },
+            "method": { "$ref": "#/$defs/namespacedName" },
+            "scope": { "$ref": "#/$defs/namespacedName" },
+            "effectiveNumerator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "effectiveDenominator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        }
+      ]
+    },
+    "samplingTelemetry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "const": "none" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "method", "scope", "effectiveNumerator", "effectiveDenominator"],
+          "properties": {
+            "mode": { "const": "sampled" },
+            "method": { "$ref": "#/$defs/namespacedName" },
+            "scope": { "$ref": "#/$defs/namespacedName" },
+            "effectiveNumerator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "effectiveDenominator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "components"],
+          "properties": {
+            "mode": { "const": "mixed" },
+            "components": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 64,
+              "items": { "$ref": "#/$defs/samplingComponent" }
+            }
+          }
+        }
+      ]
+    },
+    "providerTelemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "counters", "sampling"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/providerName" },
+        "counters": { "$ref": "#/$defs/providerBoundaryCounters" },
+        "sampling": { "$ref": "#/$defs/samplingTelemetry" }
+      }
+    },
+    "collectionError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "message"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/providerName" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["totals", "providers", "collectionErrors", "sampling"],
+      "properties": {
+        "totals": { "$ref": "#/$defs/sessionBoundaryTotals" },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/providerTelemetry" }
+        },
+        "collectionErrors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/collectionError" }
+        },
+        "sampling": { "$ref": "#/$defs/samplingTelemetry" }
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ documentation; generated executables and command links live in `bin/`.
 | [irqtop/](irqtop/README.md) | Hardware IRQ, softirq and softnet monitoring; provides irqtop and irqstat |
 | [netping/](netping/README.md) | ICMP, UDP/TCP latency, live window, bandwidth/retransmission statistics and MTU/MSS inspection |
 | [flowgen/](flowgen/README.md) | TCP/UDP session load, equal-length request/response traffic and offline latency analysis |
+| [netlens/](netlens/README.md) | Layered network stack monitoring with interfaces, qdisc, IRQs, sockets, conntrack and routes |
 | irq-affinity.sh | IRQ affinity and RPS configuration |
 | uping/ | Standalone UDP ping |
 | udp-ping-pong/ | UDP client/server test scripts |
@@ -20,6 +21,7 @@ make
 ./bin/irqstat -n 1 5
 ./bin/netping -h
 ./bin/flowgen -h
+./bin/netlens --help
 make check
 sudo make install
 ```
@@ -32,14 +34,16 @@ bin/
   irqstat -> irqtop
   netping
   flowgen
+  netlens
 ```
 
 `make install` installs the built executables and relative link to
 `/usr/local/bin`. Build before installing. Use `PREFIX="$HOME/.local"` for a
 per-user install or `DESTDIR` for a staging directory. Use `make irqtop` or
-`make netping` or `make flowgen` to build one tool, and the corresponding
-`make install-<tool>` to install it individually. `make check` checks all tools;
-`make check-netping` and `make check-flowgen` check them individually.
+`make netping`, `make flowgen` or `make netlens` to build one tool,
+and the corresponding `make install-<tool>` to install it individually.
+`make check` checks all tools;
+`make check-<tool>` checks one tool individually.
 
 The Rust tools keep implementation in `src/`, live checks in `tests/`, and
 CPU/memory measurements in `bench/`. Each tool's README documents its options,

@@ -1,0 +1,156 @@
+name: Build netlens
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "netlens-v*"
+    paths:
+      - "netlens/**"
+      - "Makefile"
+      - ".github/workflows/netlens-build.yml"
+  pull_request:
+    paths:
+      - "netlens/**"
+      - "Makefile"
+      - ".github/workflows/netlens-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: netlens
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/netlens-v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$RELEASE_TAG" = "netlens-v$version"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc make
+          rustup toolchain install stable --profile minimal \
+            --component clippy --component rustfmt
+          rustup toolchain install 1.82.0 --profile minimal
+
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+
+      - name: Check all Rust targets
+        run: cargo +stable check --all-targets --locked
+
+      - name: Lint all Rust targets
+        run: cargo +stable clippy --all-targets --locked -- -D warnings
+
+      - name: Test all Rust targets
+        run: cargo +stable test --all-targets --locked
+
+      - name: Check all Rust targets with minimum Rust
+        env:
+          CARGO_TARGET_DIR: target/msrv
+        run: cargo +1.82.0 check --all-targets --locked
+
+  static:
+    name: Static ARMv7, ARM64 and x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Build and verify static executables
+        working-directory: netlens
+        run: bash tools/build-static.sh
+
+      - name: Smoke test executables
+        run: |
+          netlens/dist/netlens-linux-x86_64 --version
+          docker run --rm -v "$PWD/netlens/dist:/artifacts:ro" \
+            ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:0.2.5 \
+            /usr/bin/qemu-arm-static /artifacts/netlens-linux-armv7 --version
+          docker run --rm -v "$PWD/netlens/dist:/artifacts:ro" \
+            ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5 \
+            /usr/bin/qemu-aarch64-static /artifacts/netlens-linux-arm64 --version
+
+      - name: Upload static executables
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: netlens-linux-static
+          path: netlens/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/netlens-v')
+    needs: [verify, static]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download static executables
+        uses: actions/download-artifact@v8
+        with:
+          name: netlens-linux-static
+          path: dist
+
+      - name: Verify release artifacts
+        working-directory: dist
+        run: |
+          sha256sum --check SHA256SUMS
+          grep -Fx "Source commit: $GITHUB_SHA" BUILDINFO.txt
+          for arch in armv7 arm64 x86_64; do
+            test -s "netlens-linux-$arch"
+          done
+
+      - name: Publish executables
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/netlens-linux-armv7 dist/netlens-linux-arm64 dist/netlens-linux-x86_64 \
+            dist/SHA256SUMS dist/BUILDINFO.txt \
+            --draft --verify-tag --title "netlens ${RELEASE_TAG#netlens-}" \
+            --notes-file netlens/RELEASE.md
+          gh release edit "$RELEASE_TAG" --draft=false

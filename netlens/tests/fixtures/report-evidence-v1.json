@@ -1,0 +1,303 @@
+{
+  "schemaVersion": 1,
+  "window": {
+    "startedAtUnixMs": 1000,
+    "durationMs": 1000
+  },
+  "scope": {
+    "interface": "eth0",
+    "networkNamespace": "net:[4026531840]"
+  },
+  "capabilities": {
+    "schemaVersion": 1,
+    "kernelRelease": "fixture",
+    "effectiveUid": 0,
+    "hasKernelBtf": false,
+    "tracefsPath": null,
+    "kfreeSkb": {
+      "available": true,
+      "hasDropReason": true,
+      "layout": "reason",
+      "formatPath": null
+    },
+    "selectedBpfMode": "reason_ring",
+    "providers": [],
+    "coverage": [
+      {
+        "layer": "netfilter",
+        "availability": "degraded",
+        "visibility": "partial",
+        "forms": ["event"],
+        "filterSupport": "broader_only",
+        "integrity": "loss_detected",
+        "sources": ["kfree_skb_tracepoint"],
+        "limitations": ["fixture transport loss state is unknown"]
+      },
+      {
+        "layer": "netdevice",
+        "availability": "active",
+        "visibility": "partial",
+        "forms": ["counter_delta"],
+        "filterSupport": "kernel_exact",
+        "integrity": "complete",
+        "sources": ["rtnetlink_link_stats"],
+        "limitations": []
+      }
+    ]
+  },
+  "subjects": [
+    {
+      "id": "s_00000000000000000000000000000000_1",
+      "provider": "linux.link.counters",
+      "kind": "interface",
+      "attributes": {
+        "linux.interface.ifindex": {
+          "type": "unsigned",
+          "value": 2
+        },
+        "linux.interface.name": {
+          "type": "string",
+          "value": "eth0"
+        }
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "meta": {
+        "id": "e_00000000000000000000000000000000_1",
+        "provider": "linux.link.counters",
+        "layer": "netdevice",
+        "descriptor": {
+          "stage": "netdevice.unspecified",
+          "hook": null,
+          "direction": "ingress",
+          "pathRole": null,
+          "context": {
+            "networkNamespace": null,
+            "ingressIfindex": 2,
+            "egressIfindex": null,
+            "queueId": null,
+            "cpu": null,
+            "protocol": null
+          },
+          "outcome": {
+            "disposition": "dropped",
+            "signal": null
+          },
+          "form": "counter_delta",
+          "role": "causal",
+          "measurement": {
+            "unit": "occurrences",
+            "domain": "interface_packet",
+            "scope": "interface",
+            "bound": "exact"
+          }
+        },
+        "subjects": [
+          {
+            "role": "ingress",
+            "id": "s_00000000000000000000000000000000_1"
+          }
+        ]
+      },
+      "metricType": "linux.link.rx_dropped",
+      "values": {
+        "start": 10,
+        "end": 14,
+        "delta": 4,
+        "reset": false
+      },
+      "attributes": {
+        "linux.counter.bits": {
+          "type": "unsigned",
+          "value": 64
+        },
+        "linux.interface.name": {
+          "type": "string",
+          "value": "eth0"
+        }
+      }
+    }
+  ],
+  "observations": [
+    {
+      "meta": {
+        "id": "e_00000000000000000000000000000000_2",
+        "provider": "linux.tracepoint.kfree_skb",
+        "layer": "netfilter",
+        "descriptor": {
+          "stage": "netfilter.unspecified",
+          "hook": null,
+          "direction": null,
+          "pathRole": null,
+          "context": {
+            "networkNamespace": null,
+            "ingressIfindex": null,
+            "egressIfindex": null,
+            "queueId": null,
+            "cpu": 2,
+            "protocol": 2048
+          },
+          "outcome": {
+            "disposition": "dropped",
+            "signal": null
+          },
+          "form": "event",
+          "role": "causal",
+          "measurement": {
+            "unit": "occurrences",
+            "domain": "skb",
+            "scope": "host",
+            "bound": "lower_bound"
+          }
+        },
+        "subjects": []
+      },
+      "eventType": "linux.skb.free",
+      "monotonicNs": 1,
+      "attributes": {
+        "linux.skb_free.reason_code": {
+          "type": "unsigned",
+          "value": 8
+        },
+        "linux.skb_free.reason_name": {
+          "type": "string",
+          "value": "NETFILTER_DROP"
+        },
+        "linux.skb_free.source_mode": {
+          "type": "string",
+          "value": "reason_ring"
+        }
+      }
+    }
+  ],
+  "findings": [
+    {
+      "id": "netdevice.link_drop",
+      "layer": "netdevice",
+      "descriptor": {
+        "stage": "netdevice.unspecified",
+        "hook": null,
+        "direction": "ingress",
+        "pathRole": null,
+        "context": {
+          "networkNamespace": null,
+          "ingressIfindex": 2,
+          "egressIfindex": null,
+          "queueId": null,
+          "cpu": null,
+          "protocol": null
+        },
+        "outcome": {
+          "disposition": "dropped",
+          "signal": null
+        },
+        "form": "counter_delta",
+        "role": "causal",
+        "measurement": {
+          "unit": "occurrences",
+          "domain": "interface_packet",
+          "scope": "interface",
+          "bound": "exact"
+        }
+      },
+      "severity": "warning",
+      "confidence": "direct",
+      "title": "Network interface drops",
+      "summary": "A network interface drop counter increased during the fixture window.",
+      "count": 4,
+      "evidence": [
+        {
+          "kind": "metric",
+          "id": "e_00000000000000000000000000000000_1"
+        }
+      ]
+    },
+    {
+      "id": "drop_reason.netfilter_drop",
+      "layer": "netfilter",
+      "descriptor": {
+        "stage": "netfilter.unspecified",
+        "hook": null,
+        "direction": null,
+        "pathRole": null,
+        "context": {
+          "networkNamespace": null,
+          "ingressIfindex": null,
+          "egressIfindex": null,
+          "queueId": null,
+          "cpu": 2,
+          "protocol": 2048
+        },
+        "outcome": {
+          "disposition": "dropped",
+          "signal": null
+        },
+        "form": "event",
+        "role": "causal",
+        "measurement": {
+          "unit": "occurrences",
+          "domain": "skb",
+          "scope": "host",
+          "bound": "lower_bound"
+        }
+      },
+      "severity": "info",
+      "confidence": "direct",
+      "title": "Kernel drop reason NETFILTER_DROP",
+      "summary": "The running kernel directly reported NETFILTER_DROP in the fixture.",
+      "count": 1,
+      "evidence": [
+        {
+          "kind": "observation",
+          "id": "e_00000000000000000000000000000000_2"
+        }
+      ]
+    }
+  ],
+  "telemetry": {
+    "totals": {
+      "bpfEventsSeen": { "value": 2, "bound": "exact" },
+      "bpfOutputLost": { "value": 1, "bound": "exact" },
+      "transportEventsReceived": { "value": 1, "bound": "exact" },
+      "transportEventsLost": { "value": 0, "bound": "lower_bound" },
+      "userEventsDropped": { "value": 0, "bound": "exact" },
+      "netlinkLossEvents": { "value": 0, "bound": "exact" },
+      "netlinkDumpInterruptions": { "value": 0, "bound": "exact" },
+      "parseErrors": { "value": 0, "bound": "exact" }
+    },
+    "providers": [
+      {
+        "provider": "linux.link.counters",
+        "counters": {
+          "bpfEventsSeen": { "status": "not_applicable" },
+          "bpfOutputLost": { "status": "not_applicable" },
+          "transportEventsReceived": { "status": "not_applicable" },
+          "transportEventsLost": { "status": "not_applicable" },
+          "userEventsDropped": { "status": "not_applicable" },
+          "netlinkLossEvents": { "status": "measured", "value": 0 },
+          "netlinkDumpInterruptions": { "status": "measured", "value": 0 },
+          "parseErrors": { "status": "measured", "value": 0 }
+        },
+        "sampling": { "mode": "none" }
+      },
+      {
+        "provider": "linux.tracepoint.kfree_skb",
+        "counters": {
+          "bpfEventsSeen": { "status": "measured", "value": 2 },
+          "bpfOutputLost": { "status": "measured", "value": 1 },
+          "transportEventsReceived": { "status": "measured", "value": 1 },
+          "transportEventsLost": { "status": "unknown" },
+          "userEventsDropped": { "status": "measured", "value": 0 },
+          "netlinkLossEvents": { "status": "not_applicable" },
+          "netlinkDumpInterruptions": { "status": "not_applicable" },
+          "parseErrors": { "status": "measured", "value": 0 }
+        },
+        "sampling": { "mode": "none" }
+      }
+    ],
+    "collectionErrors": [],
+    "sampling": { "mode": "none" }
+  }
+}
