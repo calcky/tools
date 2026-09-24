@@ -13,12 +13,12 @@ const COMPLETION_HELP: &str = "Shell completion (load in your current shell; no 
 
 #[derive(Debug, Args)]
 struct MonitorArgs {
-    /// Sampling interval from 250ms through 60s
-    #[arg(long, default_value = "1s", global = true)]
+    /// Sampling interval in seconds (0.25-60)
+    #[arg(short = 'd', alias = "interval", value_name = "SECONDS", value_parser = parse_interval, default_value = "1", global = true)]
     interval: SamplingInterval,
-    /// Show interface-labelled rows for this Linux interface
-    #[arg(long, value_parser = parse_interface, global = true)]
-    interface: Option<String>,
+    /// Show rows for these Linux interfaces (comma-separated)
+    #[arg(short = 'i', alias = "interface", value_name = "INTERFACES", value_delimiter = ',', value_parser = parse_interface, global = true)]
+    interface: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -106,11 +106,11 @@ impl Cli {
     }
 
     pub fn into_monitor_plan(self) -> Result<MonitorPlan, MonitorValidationError> {
-        let interface_anchor = self
-            .args
-            .interface
-            .map(InterfaceViewAnchor::named)
-            .transpose()?;
+        let interface_anchor = if self.args.interface.is_empty() {
+            None
+        } else {
+            Some(InterfaceViewAnchor::named_many(self.args.interface)?)
+        };
 
         let command_page = self.command.and_then(ModuleCommand::page);
         let section = command_page.map_or(MonitorSection::Overview, InitialPage::monitor_section);
@@ -121,6 +121,17 @@ impl Cli {
             interface_anchor,
         )?;
         Ok(command_page.map_or(plan.clone(), |page| plan.with_initial_page(page)))
+    }
+}
+
+fn parse_interval(value: &str) -> Result<SamplingInterval, MonitorValidationError> {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+    {
+        format!("{value}s").parse()
+    } else {
+        value.parse()
     }
 }
 
@@ -154,7 +165,7 @@ mod tests {
 
     #[test]
     fn accepts_interface_name_anchor() {
-        let named = Cli::try_parse_from(["netlens", "--interface", "eth0"])
+        let named = Cli::try_parse_from(["netlens", "-i", "eth0"])
             .unwrap()
             .into_monitor_plan()
             .unwrap();
@@ -162,6 +173,81 @@ mod tests {
             named.interface_anchor(),
             Some(&InterfaceViewAnchor::named("eth0").unwrap())
         );
+    }
+
+    #[test]
+    fn short_options_accept_multiple_interfaces_before_or_after_modules() {
+        let expected = InterfaceViewAnchor::named_many(["eth0".into(), "eth1".into()]).unwrap();
+        for args in [
+            vec!["netlens", "-d", "0.5", "-i", "eth1,eth0,eth1", "interface"],
+            vec!["netlens", "interface", "-d", "0.5", "-i", "eth0,eth1"],
+            vec![
+                "netlens",
+                "interface",
+                "--interval",
+                "500ms",
+                "--interface",
+                "eth0,eth1",
+            ],
+            vec![
+                "netlens",
+                "interface",
+                "-d",
+                "0.5",
+                "-i",
+                "eth0",
+                "-i",
+                "eth1",
+            ],
+        ] {
+            let plan = Cli::try_parse_from(args)
+                .unwrap()
+                .into_monitor_plan()
+                .unwrap();
+            assert_eq!(plan.interval().as_millis(), 500);
+            assert_eq!(plan.initial_page(), Some(InitialPage::Interface));
+            assert_eq!(plan.interface_anchor(), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn interval_numbers_are_seconds_with_millisecond_precision() {
+        for (value, millis) in [
+            ("1", 1000),
+            ("2", 2000),
+            ("0.25", 250),
+            ("0.5", 500),
+            ("1.001", 1001),
+            ("60", 60_000),
+        ] {
+            let plan = Cli::try_parse_from(["netlens", "-d", value])
+                .unwrap()
+                .into_monitor_plan()
+                .unwrap();
+            assert_eq!(plan.interval().as_millis(), millis, "{value}");
+        }
+        for value in ["0", "0.249", "60.001", "0.2501", "NaN", "inf", "", "1..5"] {
+            assert!(
+                Cli::try_parse_from(["netlens", "-d", value]).is_err(),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interface_lists_reject_empty_or_invalid_members() {
+        for value in [
+            "",
+            ",",
+            "eth0,",
+            ",eth0",
+            "eth0,,eth1",
+            "eth0,../eth1",
+            "eth0, eth1",
+        ] {
+            let error = Cli::try_parse_from(["netlens", "-i", value]).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ValueValidation, "{value:?}");
+        }
     }
 
     #[test]

@@ -269,6 +269,7 @@ pub(super) fn labels_match_anchor(
     }
     match anchor {
         InterfaceViewAnchor::Name { name } => interface == Some(name.as_str()),
+        InterfaceViewAnchor::Names { names } => interface.is_some_and(|name| names.contains(name)),
         InterfaceViewAnchor::Ifindex { ifindex: selected } => {
             ifindex
                 .and_then(|value| value.parse::<u32>().ok())

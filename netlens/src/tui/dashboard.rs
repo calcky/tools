@@ -964,6 +964,7 @@ fn interface_matches_anchor(
     match anchor {
         None => true,
         Some(InterfaceViewAnchor::Name { name }) => identity.name() == name,
+        Some(InterfaceViewAnchor::Names { names }) => names.contains(identity.name()),
         Some(InterfaceViewAnchor::Ifindex { ifindex }) => {
             identity.ifindex() == *ifindex
                 || interface_name_alias.is_some_and(|name| identity.name() == name)

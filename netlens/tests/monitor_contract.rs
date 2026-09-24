@@ -461,6 +461,34 @@ fn monitor_plan_validates_section_sets_and_view_anchor() {
 }
 
 #[test]
+fn monitor_plan_validates_and_round_trips_multiple_interface_names() {
+    let anchor =
+        InterfaceViewAnchor::named_many(["eth1".to_owned(), "eth0".to_owned(), "eth1".to_owned()])
+            .unwrap();
+    let mut wire = valid_plan_json();
+    wire["interfaceAnchor"] = json!({"kind": "names", "names": ["eth0", "eth1"]});
+    let plan: MonitorPlan = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(plan.interface_anchor(), Some(&anchor));
+    assert_eq!(
+        serde_json::to_value(plan).unwrap()["interfaceAnchor"],
+        wire["interfaceAnchor"]
+    );
+    for names in [
+        json!([]),
+        json!([""]),
+        json!(["eth0", "../eth1"]),
+        json!(["eth0", "eth\u{1b}[2J"]),
+    ] {
+        wire["interfaceAnchor"] = json!({"kind": "names", "names": names});
+        assert!(serde_json::from_value::<MonitorPlan>(wire.clone()).is_err());
+    }
+    assert_eq!(
+        InterfaceViewAnchor::named_many(["eth0".to_owned(), "eth0".to_owned()]).unwrap(),
+        InterfaceViewAnchor::named("eth0").unwrap()
+    );
+}
+
+#[test]
 fn catalog_is_closed_unique_and_complete_for_seven_collection_sections() {
     validate_catalog().unwrap();
     assert!(!metric_catalog().is_empty());

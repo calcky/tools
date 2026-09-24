@@ -2947,6 +2947,23 @@ pub(in crate::tui) mod tests {
             ["eth1"]
         );
 
+        let mut multi = App::new(MonitorSection::Overview, Duration::from_secs(1))
+            .with_interface_anchor(Some(
+                InterfaceViewAnchor::named_many(["eth1".into(), "bond0".into()]).unwrap(),
+            ));
+        multi.apply_snapshot(Arc::clone(&snapshot));
+        for page in [Page::Overview, Page::Netdev] {
+            multi.select_page(page);
+            assert_eq!(
+                multi
+                    .ordered_interfaces()
+                    .iter()
+                    .map(InterfaceIdentity::name)
+                    .collect::<Vec<_>>(),
+                ["eth1", "bond0"]
+            );
+        }
+
         let mut indexed = App::new(MonitorSection::Overview, Duration::from_secs(1))
             .with_interface_anchor(Some(InterfaceViewAnchor::indexed(3).unwrap()));
         indexed.apply_snapshot(snapshot);

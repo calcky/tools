@@ -150,6 +150,13 @@ fn render_context(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .to_owned();
     let anchor = match app.interface_anchor() {
         Some(InterfaceViewAnchor::Name { name }) => Some(name.to_owned()),
+        Some(InterfaceViewAnchor::Names { names }) => Some(
+            names
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         Some(InterfaceViewAnchor::Ifindex { ifindex }) => {
             Some(format!("ifindex={}", ifindex.get()))
         }
@@ -3056,6 +3063,20 @@ pub(in crate::tui) mod tests {
         let by_name = InterfaceViewAnchor::named("eth0").unwrap();
         let by_index = InterfaceViewAnchor::indexed(2).unwrap();
         let other = InterfaceViewAnchor::named("eth1").unwrap();
+        let multiple = InterfaceViewAnchor::named_many(["eth0".into(), "eth1".into()]).unwrap();
+        assert!(series_matches_anchor(&global, Some(&multiple), None));
+        for (name, selected) in [
+            ("eth0", true),
+            ("eth1", true),
+            ("eth2", false),
+            ("eth01", false),
+        ] {
+            let labels = MetricLabels::new([(MetricLabel::Interface, name.to_owned())]).unwrap();
+            assert_eq!(
+                series_matches_anchor(&labels, Some(&multiple), None),
+                selected
+            );
+        }
         assert!(series_matches_anchor(&global, Some(&by_name), None));
         assert!(series_matches_anchor(&eth0, Some(&by_name), None));
         assert!(series_matches_anchor(&eth0, Some(&by_index), None));

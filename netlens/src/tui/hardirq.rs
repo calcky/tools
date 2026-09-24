@@ -61,6 +61,9 @@ impl HardirqTable {
                     name == interface.as_str()
                         || name.starts_with(&format!("{}/vf", interface.as_str()))
                 }
+                Some(InterfaceViewAnchor::Names { names }) => names.iter().any(|interface| {
+                    name == interface.as_str() || name.starts_with(&format!("{interface}/vf"))
+                }),
                 Some(InterfaceViewAnchor::Ifindex { ifindex }) => *index == ifindex.get(),
             }) {
                 continue;
@@ -381,6 +384,43 @@ mod tests {
                 .iter()
                 .any(|row| row.to_string().contains("eth1")));
         }
+    }
+
+    #[test]
+    fn multiple_interfaces_include_vfs_and_shared_irqs_without_duplicate_rows() {
+        let mut rows: Vec<_> = ["eth0", "eth0/vf1", "eth1", "eth2", "eth01/vf1"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| NetworkIrqRow {
+                irq: 40 + index as u32,
+                interfaces: vec![(name.to_owned(), index as u32 + 1)],
+                counts: vec![100],
+                action: "vector".to_owned(),
+            })
+            .collect();
+        rows[0].interfaces.push(("eth2".to_owned(), 4));
+        let snapshot = HardirqSnapshot::next(
+            None,
+            Duration::from_secs(1),
+            Ok(NetworkIrqData {
+                cpus: vec![0],
+                rows,
+            }),
+        );
+        let anchor = InterfaceViewAnchor::named_many(["eth0".into(), "eth2".into()]).unwrap();
+        let table = HardirqTable::new(&snapshot, Some(&anchor), 160, Sort::Irq, false);
+        assert_eq!(table.rows.len(), 3);
+        assert!(table.rows[0].to_string().contains("eth0,eth2"));
+        assert!(table.rows[1].to_string().contains("eth0/vf1"));
+        assert!(table.rows[2].to_string().contains("eth2"));
+        assert!(!table
+            .rows
+            .iter()
+            .any(|row| row.to_string().contains("eth1")));
+        assert!(!table
+            .rows
+            .iter()
+            .any(|row| row.to_string().contains("eth01")));
     }
 
     #[test]

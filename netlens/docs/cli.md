@@ -6,8 +6,8 @@
 `htop`-style continuous terminal monitor.
 
 ```text
-netlens [--interval DURATION]
-       [--interface NAME]
+netlens [-d SECONDS]
+       [-i NAME[,NAME...]]
        [COMMAND]
 ```
 
@@ -18,7 +18,7 @@ sequences. `--help` and `--version` remain available without starting the TUI.
 Module commands select the initial page: `overview`, `interface`, `qdisc`,
 `softirq`, `hardirq`, `socket`, `transport`, `network`, `conntrack`, `route`,
 and `providers`. Global options work before or after the command, for example
-`netlens socket --interval 2s`. With no command, the initial page is Overview.
+`netlens interface -d 2 -i eth0,eth1`. With no command, the initial page is Overview.
 
 `netlens completions <shell>` generates completion scripts without a terminal
 for Bash, Zsh, Fish, PowerShell, or Elvish. See the README for installation paths.
@@ -32,8 +32,12 @@ Their historical `nwdiag.*` identifiers are unchanged by the project rename.
 
 | Option | Meaning |
 | --- | --- |
-| `--interval DURATION` | Sampling interval. Defaults to `1s`; accepts whole-millisecond durations from `250ms` through `60s`. |
-| `--interface NAME` | Validate and retain a Linux interface-name view anchor. |
+| `-d SECONDS` | Sampling interval in seconds, without a unit suffix. Default `1`; range `0.25`-`60`, with millisecond precision. For example, `-d 0.5` samples every half second. |
+| `-i NAME[,NAME...]` | Show rows for any of these Linux interfaces. Exact name matching; duplicate names are removed. |
+
+Empty list entries and invalid interface names are rejected. `-i` may also be
+repeated. The old `--interval` and `--interface` spellings remain accepted as
+hidden compatibility aliases; help and completions present the short options.
 
 The current collector samples all visible interfaces. Interface anchors filter
 interface-labelled rows in Overview and layer details; rows without an
@@ -42,7 +46,7 @@ softnet counters, remain visible. The filter does not change collection scope,
 restart collection, or reset the process baseline.
 
 Overview and Providers sample every summary layer. Other pages stop unrelated
-provider groups before I/O, while keeping their own counters at `--interval`.
+provider groups before I/O, while keeping their own counters at `-d`.
 Interface drilldowns also keep the link/NIC dependencies used in their headers
 and coalescing settings. Socket/Conntrack tables and Route inventories start
 on entry and stop on exit. Resumed counters rebaseline on their first sample;

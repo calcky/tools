@@ -246,6 +246,7 @@ impl<'de> Deserialize<'de> for SamplingInterval {
 )]
 pub enum InterfaceViewAnchor {
     Name { name: String },
+    Names { names: BTreeSet<String> },
     Ifindex { ifindex: IfIndex },
 }
 
@@ -262,17 +263,33 @@ impl InterfaceViewAnchor {
         Ok(Self::Ifindex { ifindex })
     }
 
+    pub fn named_many(
+        names: impl IntoIterator<Item = String>,
+    ) -> Result<Self, MonitorValidationError> {
+        let names: BTreeSet<_> = names.into_iter().collect();
+        if names.len() == 1 {
+            return Self::named(names.into_iter().next().expect("one interface name"));
+        }
+        let anchor = Self::Names { names };
+        anchor.validate()?;
+        Ok(anchor)
+    }
+
     fn validate(&self) -> Result<(), MonitorValidationError> {
+        let valid_name = |name: &str| {
+            name.is_ascii() && name.len() <= MAX_LABEL_VALUE_BYTES && valid_interface_name(name)
+        };
         match self {
-            Self::Name { name }
-                if name.is_ascii()
-                    && name.len() <= MAX_LABEL_VALUE_BYTES
-                    && valid_interface_name(name) =>
+            Self::Name { name } if valid_name(name) => Ok(()),
+            Self::Names { names }
+                if !names.is_empty() && names.iter().all(|name| valid_name(name)) =>
             {
                 Ok(())
             }
             Self::Ifindex { .. } => Ok(()),
-            Self::Name { .. } => Err(MonitorValidationError::InvalidInterfaceAnchor),
+            Self::Name { .. } | Self::Names { .. } => {
+                Err(MonitorValidationError::InvalidInterfaceAnchor)
+            }
         }
     }
 }

@@ -22,12 +22,12 @@ parser.add_argument("--width", type=int, default=160)
 parser.add_argument("--height", type=int, default=40)
 parser.add_argument("--profile", default=None)
 parser.add_argument("--warmup", type=float, default=5)
-parser.add_argument("--interval", default="1s")
+parser.add_argument("--interval", default="1", help="Sampling interval in seconds")
 args = parser.parse_args()
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", args.height, args.width, 0, 0))
 module = {"netdevice": "interface", "nic": "interface"}.get(args.section, args.section)
-command = [args.binary, module, "--interval", args.interval]
+command = [args.binary, module, "-d", args.interval]
 if args.trace:
     command = ["strace", "-f", "-qq", "-e", "trace=execve", "-o", args.trace] + command
 if args.profile:

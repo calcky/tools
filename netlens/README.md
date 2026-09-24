@@ -24,13 +24,14 @@ See [the release notes](RELEASE.md) for architecture requirements and checksums.
 Run `netlens` directly from an interactive terminal:
 
 ```text
-netlens [--interval 1s]
-       [--interface eth0]
+netlens [-d 1]
+       [-i eth0,eth1]
        [COMMAND]
 ```
 
-The sampling interval defaults to one second and accepts whole-millisecond
-durations from `250ms` through `60s`. Module commands select the initial page:
+`-d` takes seconds without a unit suffix: `-d 1` samples every second and
+`-d 0.5` every half second. It defaults to `1` and accepts `0.25` through `60`
+with millisecond precision. Module commands select the initial page:
 `overview`, `interface`, `qdisc`, `softirq`, `hardirq`, `socket`, `transport`,
 `network`, `conntrack`, `route`, or `providers`.
 
@@ -45,10 +46,10 @@ link/NIC data for the interface header and hardware coalescing settings. A layer
 detail's header health reflects that layer; the whole-interface view assesses
 all its layers.
 
-Active counters follow `--interval`. In Overview and Providers, NIC statistics
+Active counters follow `-d`. In Overview and Providers, NIC statistics
 and hardirq data refresh every 5 seconds, firewall rules every 10 seconds (or
 the requested interval if longer), and qdisc counters every sample. Opening a
-corresponding detail triggers a refresh and follows `--interval`. Ettool
+corresponding detail triggers a refresh and follows `-d`. Ettool
 configuration refreshes on a separate worker while its page needs it. Its first
 batch starts immediately; recurring batches spread probes across five seconds
 and aim for a completed refresh roughly every 30 seconds (rounded to the NIC
@@ -101,17 +102,19 @@ The bounded terminal benchmark lives in `bench/measure.py`, following the other
 tools. For a 1s sampling measurement, run from the tools repository root:
 
 ```sh
-python3 netlens/bench/measure.py ./bin/netlens --section interface --interval 1s --seconds 16 --warmup 5
+python3 netlens/bench/measure.py ./bin/netlens --section interface --interval 1 --seconds 16 --warmup 5
 ```
 
 It reports CPU use and memory along with the terminal session. Measurements
 depend on the selected page, interface/socket count and available providers.
 
-`--interface` filters interface-labelled rows in Overview and
+`-i eth0,eth1` filters interface-labelled rows to either selected interface in Overview and
 layer details while retaining host/current-namespace aggregate rows. Collection
 still attempts every interface in the current network namespace within the
 documented provider and session bounds, so the anchor does not reset or narrow
-the process history.
+the process history. Names are matched exactly and duplicates are removed.
+Empty list entries and invalid names are rejected. The old `--interval` and
+`--interface` spellings remain accepted as hidden compatibility aliases.
 Both the default Overview's Interface area and the separate Interface page
 include every observed netdevice, including DOWN SR-IOV VFs, and keep the real
 link state visible. Explicit interface-name anchors still restrict the displayed
@@ -170,7 +173,7 @@ netlens                         # Overview
 netlens interface               # Interface
 netlens qdisc                   # Qdisc
 netlens softirq                 # SoftIRQ
-netlens hardirq --interval 1s   # HardIRQ
+netlens hardirq -d 1           # HardIRQ
 netlens socket                  # Socket
 netlens transport               # Transport
 netlens network                 # Network
@@ -306,7 +309,7 @@ lookup views keep an outer border while their contents scroll; keyboard paging
 and selection account for the space used by the border.
 
 Route, rule, and neighbour inventories run only while the Route page or one of
-its drilldowns is open, following `--interval`. Leaving stops its worker;
+its drilldowns is open, following `-d`. Leaving stops its worker;
 reopening starts a new inventory baseline and change totals. For each inventory
 and IP family, the first complete dump establishes a baseline. The menu keeps saturating
 cumulative counts of net changes observed between later complete samples:

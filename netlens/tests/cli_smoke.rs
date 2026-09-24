@@ -12,7 +12,13 @@ fn help_exposes_only_the_default_monitor_options() {
     assert!(output.stderr.is_empty());
     let help = String::from_utf8(output.stdout).unwrap();
     assert!(help.contains("Usage: netlens [OPTIONS] [COMMAND]"));
-    for option in ["--interval", "--interface"] {
+    for option in [
+        "-d <SECONDS>",
+        "in seconds",
+        "[default: 1]",
+        "-i <INTERFACES>",
+        "comma-separated",
+    ] {
         assert!(help.contains(option), "missing {option} from help");
     }
     for removed in [
@@ -23,6 +29,8 @@ fn help_exposes_only_the_default_monitor_options() {
         "--section",
         "compinit",
         "compdef",
+        "--interval",
+        "--interface",
     ] {
         assert!(
             !help.contains(removed),
@@ -47,7 +55,7 @@ fn module_commands_are_accepted_before_the_tty_boundary() {
         "providers",
     ] {
         let output = netlens()
-            .args([command, "--interval", "1s"])
+            .args([command, "-d", "1", "-i", "eth0,eth1"])
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(3), "{command}");
@@ -63,7 +71,8 @@ fn completion_command_generates_shell_script_without_a_tty() {
     assert!(output.stderr.is_empty());
     let completion = String::from_utf8(output.stdout).unwrap();
     assert!(completion.contains("hardirq"));
-    assert!(completion.contains("--interval"));
+    assert!(completion.contains("-d"));
+    assert!(completion.contains("-i"));
     assert!(!completion.contains("--ifindex"));
     assert!(!completion.contains("--section"));
 }
@@ -81,6 +90,12 @@ fn removed_subcommands_are_rejected_by_clap() {
 #[test]
 fn monitor_arguments_fail_closed() {
     for arguments in [
+        vec!["-d", "0.249"],
+        vec!["-d", "61"],
+        vec!["-d", "0.2501"],
+        vec!["-i", "eth0,"],
+        vec!["-i", "eth0,../eth1"],
+        vec!["-i", "eth0,eth\u{1b}[2J"],
         vec!["--interval", "249ms"],
         vec!["--interval", "61s"],
         vec!["--section", "transport"],
