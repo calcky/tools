@@ -111,6 +111,7 @@ mod tests {
     fn config(cpus: Option<Vec<usize>>, workers: usize) -> Config {
         Config {
             server: false,
+            server_stats: false,
             tcp: true,
             host: Some("127.0.0.1".into()),
             sessions: workers,

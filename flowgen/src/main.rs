@@ -25,11 +25,11 @@ use std::{
 
 fn run() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() == 1 && args[0] == "-h" {
+    if args.iter().any(|arg| arg == "-h") {
         println!("{}", options::HELP);
         return Ok(());
     }
-    if args.len() == 1 && args[0] == "-v" {
+    if args.iter().any(|arg| arg == "-v") {
         println!("flowgen {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }

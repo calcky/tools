@@ -13,6 +13,10 @@ cargo test
 
 Start the server, then run either client example in another terminal. Each
 `-o` directory must be fresh; choose a new name when repeating a run.
+The server prints startup information once and reports runtime errors. Add
+`--stats` to print aggregate statistics to stderr every second, for example
+`flowgen -s --stats`. Periodic output is off by default. Client statistics and
+server recordings remain available in either mode.
 
 ```sh
 ./target/release/flowgen -s -p 11112 -w 1 -o results/server-1
@@ -38,18 +42,27 @@ session before admitting its replacement, so setup/drain delays can create a
 temporary ready-session deficit. Ctrl+C stops scheduling and drains outstanding
 work before recording and reporting finish.
 
+Use `-T 0` (or `-T0`) to keep sending after warmup until Ctrl+C/SIGTERM.
+Warmup and request timeouts still apply. Both client and server must support
+unlimited runs; the server keeps the run until END or control-channel closure.
+Recordings and final statistics are finalized when the client stops normally.
+With connection turnover, an unlimited run checks initial source-tuple capacity
+only. Without `-Q`, exhausting the pool stops replacements while existing
+sessions keep sending; use `-Q` to explicitly permit cooldown reuse.
+
 ## Options
 
 | Option | Meaning (default) |
 | --- | --- |
 | `-s` | Server: TCP control/data and UDP on one port |
+| `--stats` | Server-only: print aggregate statistics every second (off) |
 | `-t` / `-u` | Client data protocol; select exactly one |
 | `-c N` | Client target sessions (1000); client-only |
 | `-a SEC` | Positive warmup duration (10) |
 | `-U RATE` | Replacements/s after warmup (0: fixed mode) |
 | `-r RATE` | Requests/s **per ready session** (10) |
 | `-l BYTES` | Application message length including header, 48..65507 (128) |
-| `-T SEC` | Load duration excluding warmup (60) |
+| `-T SEC` | Load duration excluding warmup (60); `0` runs until stopped |
 | `-W SEC` | Setup, request and drain timeout (1) |
 | `-w N` | Workers (default up to 4, depending on available CPUs) |
 | `-L MODE` | Recording: `events`, `summary`, or `off` (`events`) |
@@ -66,17 +79,23 @@ work before recording and reporting finish.
 | `-R DIR` | Offline analysis only; no other runtime arguments |
 | `-h` / `-v` | Help / version |
 
-Times accept fractional seconds. Server mode accepts `-s`, `-w`, `-L`, `-A`,
+Times accept fractional seconds. Server mode accepts `-s`, `--stats`, `-w`, `-L`, `-A`,
 `-S`, `-D`, `-b`, `-p`, `-4`/`-6` and `-o`. The server does not impose a session count limit,
 either globally or per run. Client `-c` controls the target; replacement
 registrations can overlap old sessions still being closed by the server.
-Actual capacity depends on available memory and `RLIMIT_NOFILE`; provision the
-file limit for the expected TCP connections before starting. Client preflight
+Actual capacity depends on available memory and `RLIMIT_NOFILE`. At startup,
+both client and server try to raise their process soft and hard file limits to
+Linux's `/proc/sys/fs/nr_open` ceiling (typically 1048576); Linux does not allow
+a truly unlimited file-descriptor limit. If permission to raise the hard limit
+is denied, flowgen raises the soft limit to the existing hard limit instead,
+bounded by the kernel ceiling. Startup fails only if the resulting limit is
+below the estimated need, with an error showing the limits and required value.
+Client preflight
 checks arithmetic overflow and resource capacities without imposing a fixed
 application-memory ceiling. Server startup checks only
 worker/control descriptor overhead. Protocol validation, pending-registration,
 control-run and buffer/queue protections remain in place. flowgen does not change
-sysctls, addresses or file-descriptor limits automatically.
+sysctls, addresses or persistent system configuration.
 Clients use `min(requested workers, target sessions)` effective workers.
 
 ## Capacity And Measurements

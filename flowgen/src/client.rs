@@ -898,7 +898,7 @@ impl Worker {
                 .shared
                 .load
                 .get()
-                .is_some_and(|epoch| now >= *epoch + self.o.duration)
+                .is_some_and(|epoch| !self.o.duration.is_zero() && now >= *epoch + self.o.duration)
         {
             self.stopping = true;
         }
@@ -962,7 +962,7 @@ impl Worker {
                         self.schedule_first(t, id);
                     }
                 }
-                if now >= epoch + self.o.duration {
+                if !self.o.duration.is_zero() && now >= epoch + self.o.duration {
                     self.stopping = true;
                 }
             }
@@ -1226,9 +1226,13 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         run,
         flow: o.sessions as u64,
         seq: o.timeout.as_nanos() as u64,
-        stamp: (o.warmup + o.duration + o.timeout * 3 + Duration::from_secs(30))
-            .as_nanos()
-            .min(u64::MAX as u128) as u64,
+        stamp: if o.duration.is_zero() {
+            wire::UNLIMITED_RUN
+        } else {
+            (o.warmup + o.duration + o.timeout * 3 + Duration::from_secs(30))
+                .as_nanos()
+                .min(u64::MAX as u128) as u64
+        },
         aux: o.length as u32,
         len: wire::HEADER,
     };
@@ -1316,6 +1320,9 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         .collect();
     println!("flowgen | {} | {remote} | {} sessions | warmup {:.3}s | {:.2} requests/s/session | {} bytes",if o.tcp {"TCP"} else {"UDP"},o.sessions,o.warmup.as_secs_f64(),o.pps,o.length);
     println!("records: {}", o.output.display());
+    if o.duration.is_zero() {
+        println!("duration: unlimited (Ctrl+C to stop)");
+    }
     let mut last = Instant::now();
     let mut prev = [0; 8];
     let mut report_seq = 0;
@@ -1325,10 +1332,9 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
             shared.control_failed.store(true, Relaxed);
         }
         let ending = stop.load(Relaxed)
-            || shared
-                .load
-                .get()
-                .is_some_and(|epoch| Instant::now() >= *epoch + o.duration);
+            || shared.load.get().is_some_and(|epoch| {
+                !o.duration.is_zero() && Instant::now() >= *epoch + o.duration
+            });
         if ending {
             shared.retired.lock().unwrap().clear();
         }
@@ -1390,7 +1396,7 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
                 || shared
                     .load
                     .get()
-                    .is_some_and(|epoch| now >= *epoch + o.duration)
+                    .is_some_and(|epoch| !o.duration.is_zero() && now >= *epoch + o.duration)
             {
                 "DRAIN"
             } else if shared.load.get().is_some() {

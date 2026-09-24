@@ -143,7 +143,7 @@ struct Run {
     length: usize,
     timeout: Duration,
     start: Instant,
-    expires: Instant,
+    expires: Option<Instant>,
     alive: AtomicBool,
     counts: Counts,
     traffic: Vec<Traffic>,
@@ -156,7 +156,8 @@ impl Run {
         traffic_snapshot(&self.counts, &self.traffic)
     }
     fn active(&self) -> bool {
-        self.alive.load(Ordering::Acquire) && Instant::now() < self.expires
+        self.alive.load(Ordering::Acquire)
+            && self.expires.is_none_or(|expires| Instant::now() < expires)
     }
 
     fn matches(&self, h: Header) -> bool {
@@ -217,15 +218,20 @@ impl Shared {
             || h.run == 0
             || target == 0
             || h.seq == 0
-            || h.stamp == 0
             || !(wire::HEADER..=wire::MAX).contains(&(h.aux as usize))
         {
             return Err(Kind::Invalid);
         }
         let start = Instant::now();
-        let expires = start
-            .checked_add(Duration::from_nanos(h.stamp))
-            .ok_or(Kind::Invalid)?;
+        let expires = if h.stamp == wire::UNLIMITED_RUN {
+            None
+        } else {
+            Some(
+                start
+                    .checked_add(Duration::from_nanos(h.stamp))
+                    .ok_or(Kind::Invalid)?,
+            )
+        };
         let mut runs = self.runs.lock().unwrap();
         if runs.contains_key(&h.run) {
             return Err(Kind::Invalid);
@@ -1276,7 +1282,7 @@ impl<'a> Worker<'a> {
             Role::Pending => Some(peer.accepted + self.o.timeout),
             Role::Control {
                 run, ended: false, ..
-            } => Some(run.expires),
+            } => run.expires,
             _ => None,
         };
         for since in [
@@ -1857,8 +1863,8 @@ impl<'a> Worker<'a> {
         let mut accepting = false;
         let mut receiving = false;
         let mut tick = Instant::now();
-        let mut report = tick;
         let mut publish = tick;
+        let mut report = tick;
         let mut previous = [0u64; 8];
         while !self.stop.load(Ordering::Acquire) {
             let runnable = accepting
@@ -1941,7 +1947,10 @@ impl<'a> Worker<'a> {
                 self.maintenance()?;
                 tick = Instant::now() + TICK;
             }
-            if self.id == 0 && now.duration_since(report) >= Duration::from_secs(1) {
+            if self.o.server_stats
+                && self.id == 0
+                && now.duration_since(report) >= Duration::from_secs(1)
+            {
                 let current = self.shared.snapshot();
                 let dt = now.duration_since(report).as_secs_f64();
                 eprintln!("server clients={} active={} request/s={:.0} response/s={:.0} rx_Mbit/s={:.3} tx_Mbit/s={:.3} failed={} limited={} invalid={}",
@@ -2159,6 +2168,45 @@ mod tests {
             aux: 128,
             len: wire::HEADER,
         }
+    }
+
+    #[test]
+    fn unlimited_control_has_no_expiry_but_still_ends() {
+        let o = test_config("unlimited");
+        let shared = Arc::new(Shared::new(2));
+        let run = shared
+            .accept(Header {
+                stamp: wire::UNLIMITED_RUN,
+                ..control(42, 1)
+            })
+            .ok()
+            .unwrap();
+        assert!(run.expires.is_none());
+        shared.expire();
+        assert!(shared.lookup(42).is_some());
+        let mut worker =
+            Worker::new(&o, 0, shared.clone(), Arc::new(AtomicBool::new(false))).unwrap();
+        let (tx, _rx) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut peer = pending(tx.into());
+        peer.role = Role::Control {
+            run: run.clone(),
+            last_seq: None,
+            ended: false,
+        };
+        worker.deadline(Token(2), &mut peer);
+        assert!(peer.deadline.is_none());
+        // Partial frames retain their timeout even on an unlimited control.
+        let since = Instant::now();
+        peer.input.since = Some(since);
+        worker.deadline(Token(2), &mut peer);
+        assert_eq!(peer.deadline, Some(since + run.timeout));
+        shared.end(&run);
+        assert!(!run.active());
+        assert!(shared.lookup(42).is_none());
+        let finite = shared.accept(control(43, 1)).ok().unwrap();
+        assert_eq!(finite.expires, Some(finite.start + Duration::from_secs(60)));
+        drop(worker);
+        std::fs::remove_dir_all(&o.output).unwrap();
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{
@@ -106,9 +107,37 @@ impl ResultOutput {
 }
 impl Process {
     fn spawn(root: &Scratch, name: &str, args: &[String]) -> Self {
+        Self::spawn_with_file_limit(root, name, args, None)
+    }
+    fn spawn_with_file_limit(
+        root: &Scratch,
+        name: &str,
+        args: &[String],
+        soft_limit: Option<libc::rlim_t>,
+    ) -> Self {
         let out = root.path(&format!("{name}.stdout"));
         let err = root.path(&format!("{name}.stderr"));
-        let child = Command::new(BIN)
+        let mut command = Command::new(BIN);
+        if let Some(soft_limit) = soft_limit {
+            // Only async-signal-safe calls in the forked child before exec.
+            unsafe {
+                command.pre_exec(move || {
+                    let mut limit = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    limit.rlim_cur = soft_limit;
+                    if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        let child = command
             .args(args)
             .stdin(Stdio::null())
             .stdout(File::create(&out).unwrap())
@@ -1216,8 +1245,7 @@ fn loopback_recording_modes_multiworker() {
         }
         server.interrupt();
         let result = server.finish();
-        assert!(result.status.success(), "{}", result.err);
-        assert!(!result.err.contains("recording error"), "{}", result.err);
+        result.success();
         let summaries = recording_artifacts(&server_dir, server_mode, None);
         if server_mode == "summary" {
             let rows: Vec<_> = summaries.iter().map(|path| summary_row(path)).collect();
@@ -1325,12 +1353,78 @@ fn summary_row(path: &Path) -> HashMap<String, String> {
 }
 
 #[test]
+fn help_and_version_work_anywhere_without_starting_a_run() {
+    let root = Scratch::new();
+    for flag in ["-h", "-v"] {
+        let expected = if flag == "-h" {
+            "Usage: flowgen".to_owned()
+        } else {
+            format!("flowgen {}", env!("CARGO_PKG_VERSION"))
+        };
+        for args in [
+            vec![flag],
+            vec![flag, "-u", "192.168.201.2", "-T", "86400"],
+            vec!["-u", flag, "192.168.201.2", "-T", "86400"],
+            vec!["-u", "192.168.201.2", "-T", "86400", flag],
+            vec!["-s", "--stats", flag],
+            vec!["-R", "missing-recordings", flag],
+        ] {
+            let output = Command::new(BIN)
+                .args(&args)
+                .current_dir(&root.0)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{args:?}: {:?}", output);
+            assert!(output.stderr.is_empty(), "{args:?}: {:?}", output);
+            assert!(String::from_utf8(output.stdout)
+                .unwrap()
+                .starts_with(&expected));
+            assert!(!root.path("results").exists());
+        }
+    }
+}
+
+#[test]
 fn loopback_cli_and_faults() {
     let _lock = suite_lock();
     let root = Scratch::new();
     let mut sources = Sources::new();
     for ipv6 in [false, true] {
         let (mut server, address) = start_server(&root, ipv6);
+        if !ipv6 {
+            for tcp in [false, true] {
+                let name = if tcp {
+                    "unlimited-tcp"
+                } else {
+                    "unlimited-udp"
+                };
+                let (range, reservation) = sources.take(address.ip());
+                let mut args = client_args(&root, name, address, tcp, &range, true, "0");
+                if tcp {
+                    let index = args.iter().position(|arg| arg == "-T").unwrap();
+                    args.splice(index..index + 2, ["-T0".to_owned()]);
+                }
+                drop(reservation);
+                // Three sessions + one worker need 107 descriptors, so 64
+                // exercises automatic adjustment before either protocol runs.
+                let mut client = Process::spawn_with_file_limit(&root, name, &args, Some(64));
+                client.wait_for(|out| out.matches("req/resp ").count() >= 4);
+                assert!(client.child.try_wait().unwrap().is_none());
+                assert!(client.output().contains("duration: unlimited"));
+                assert!(!client.output().contains("DRAIN"));
+                if tcp {
+                    client.interrupt();
+                } else {
+                    assert_eq!(
+                        unsafe { libc::kill(client.child.id() as libc::pid_t, libc::SIGTERM) },
+                        0
+                    );
+                }
+                healthy(&client.finish());
+                inspect_recording(&root.path(name), true);
+                offline(&root, name);
+            }
+        }
         for tcp in [false, true] {
             for churn in [false, true] {
                 let name = format!(
@@ -1439,12 +1533,7 @@ fn loopback_cli_and_faults() {
         }
         server.interrupt();
         let result = server.finish();
-        assert!(result.status.success(), "server failed: {}", result.err);
-        assert!(
-            !result.err.contains("flowgen:") && !result.err.contains("recording error"),
-            "{}",
-            result.err
-        );
+        result.success();
     }
     // Bind without listen so the control connect is refused while no competing
     // listener can claim our selected destination port.

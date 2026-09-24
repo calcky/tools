@@ -3,6 +3,8 @@ use std::io;
 pub const HEADER: usize = 48;
 pub const MAX: usize = 65507;
 pub const CONTROL: u8 = 1;
+// CONTROL stamp=0 keeps the run alive until END or control-channel closure.
+pub const UNLIMITED_RUN: u64 = 0;
 pub const ACCEPT: u8 = 2;
 pub const OPEN: u8 = 3;
 pub const ACK: u8 = 4;

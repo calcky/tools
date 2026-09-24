@@ -233,12 +233,14 @@ fn reuse_bytes(capacity: u64) -> io::Result<u64> {
         .ok_or_else(|| invalid("tuple reuse memory estimate overflow"))
 }
 
-/// Read-only admission checks. The supplied capacity must exclude reserved ports.
+/// Validate resources and maximize the process file limit within permissions.
+/// The supplied capacity must exclude reserved ports.
 /// Estimates cover bounded application buffers, not kernel socket memory or disk.
 pub fn preflight(config: &Config, capacity: u64) -> io::Result<()> {
     if config.analyze.is_some() {
         return Ok(());
     }
+    let required = check_resources(config, capacity, u64::MAX)?;
     // SAFETY: getrlimit writes a properly sized, initialized rlimit structure.
     let mut limit = libc::rlimit {
         rlim_cur: 0,
@@ -251,13 +253,49 @@ pub fn preflight(config: &Config, capacity: u64) -> io::Result<()> {
             format!("cannot read RLIMIT_NOFILE: {error}"),
         ));
     }
-    // rlim_t is 32 bits on some supported Linux targets and 64 bits on others.
-    #[allow(clippy::unnecessary_cast)]
-    let nofile = limit.rlim_cur as u64;
-    check_resources(config, capacity, nofile)
+    let minimum = libc::rlim_t::try_from(required)
+        .map_err(|_| invalid("file descriptor requirement exceeds platform limit"))?;
+    // Linux rejects RLIM_INFINITY for NOFILE: fs.nr_open is its ceiling.
+    let ceiling = fs::read_to_string("/proc/sys/fs/nr_open")
+        .ok()
+        .and_then(|value| value.trim().parse::<libc::rlim_t>().ok())
+        .filter(|&value| value > 0 && value != libc::RLIM_INFINITY)
+        .unwrap_or(limit.rlim_max.max(minimum));
+    let mut failure = None;
+    for target in [
+        ceiling.max(limit.rlim_cur),
+        limit.rlim_max.min(ceiling).max(limit.rlim_cur),
+    ] {
+        if target == limit.rlim_cur {
+            continue;
+        }
+        let raised = libc::rlimit {
+            rlim_cur: target,
+            rlim_max: limit.rlim_max.max(target),
+        };
+        // SAFETY: setrlimit reads a valid structure and changes only this process.
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } == 0 {
+            limit = raised;
+            break;
+        }
+        failure = Some(io::Error::last_os_error());
+    }
+    if limit.rlim_cur < minimum {
+        let error =
+            failure.unwrap_or_else(|| invalid("system file limit is below the requirement"));
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "cannot raise RLIMIT_NOFILE to {required} (soft={}, hard={}): {error}; raise the process/container file limit (ulimit -n {required}){}",
+                limit.rlim_cur, limit.rlim_max,
+                if config.server { "" } else { " or reduce -c/-w" }
+            ),
+        ));
+    }
+    Ok(())
 }
 
-fn check_resources(config: &Config, capacity: u64, nofile: u64) -> io::Result<()> {
+fn check_resources(config: &Config, capacity: u64, nofile: u64) -> io::Result<u64> {
     if config.workers == 0 || config.workers > MAX_WORKERS {
         return Err(invalid("worker count exceeds practical limits"));
     }
@@ -269,7 +307,7 @@ fn check_resources(config: &Config, capacity: u64, nofile: u64) -> io::Result<()
                 "RLIMIT_NOFILE is {nofile}, need at least {startup_descriptors} for server workers and control/reserve descriptors"
             )));
         }
-        return Ok(());
+        return Ok(startup_descriptors);
     }
     if config.sessions == 0
         || config.sessions > MAX_SESSIONS
@@ -290,13 +328,12 @@ fn check_resources(config: &Config, capacity: u64, nofile: u64) -> io::Result<()
             "turnover must be finite/nonnegative and PPS finite/positive",
         ));
     }
-    if config.duration.is_zero() || config.warmup.is_zero() || config.timeout.is_zero() {
-        return Err(invalid(
-            "load, warmup and timeout durations must be positive",
-        ));
+    if config.warmup.is_zero() || config.timeout.is_zero() {
+        return Err(invalid("warmup and timeout durations must be positive"));
     }
     let sessions = config.sessions as u64;
     if !config.server {
+        // An unlimited run can only reserve its initial population in advance.
         let replacements = (config.turnover * config.duration.as_secs_f64()).ceil();
         // u64::MAX rounds up to 2^64 as f64; reject that boundary before casting.
         if !replacements.is_finite() || replacements < 0.0 || replacements >= u64::MAX as f64 {
@@ -365,7 +402,7 @@ fn check_resources(config: &Config, capacity: u64, nofile: u64) -> io::Result<()
         .and_then(|n| n.checked_add(worker_bytes))
         .and_then(|n| n.checked_add(pool_bytes))
         .ok_or_else(|| invalid("application memory estimate overflow"))?;
-    Ok(())
+    Ok(descriptor_need)
 }
 
 #[cfg(test)]
@@ -573,6 +610,18 @@ mod tests {
     }
 
     #[test]
+    fn unlimited_preflight_checks_initial_population_and_timeouts() {
+        let mut c = config(&["-u", "-c", "100", "-U", "5", "-T0", "localhost"]);
+        check_resources(&c, 100, u64::MAX).unwrap();
+        assert!(check_resources(&c, 99, u64::MAX).is_err());
+        c.timeout = Duration::ZERO;
+        assert!(check_resources(&c, 100, u64::MAX).is_err());
+        c.timeout = Duration::from_secs(1);
+        c.warmup = Duration::ZERO;
+        assert!(check_resources(&c, 100, u64::MAX).is_err());
+    }
+
+    #[test]
     fn preflight_file_limits_both_modes_and_large_memory_estimates() {
         let mut c = config(&["-t", "-c", "10", "-w", "2", "localhost"]);
         let needed = 10 + 2 * 8 + 96;
@@ -620,6 +669,98 @@ mod tests {
             .contains("memory estimate overflow"));
         let offline = config(&["-R", "recordings"]);
         preflight(&offline, 0).unwrap();
+    }
+
+    #[test]
+    fn preflight_adjusts_file_limit_in_isolated_process() {
+        const CASE: &str = "FLOWGEN_TEST_NOFILE_CASE";
+        if let Ok(case) = std::env::var(CASE) {
+            let ceiling: libc::rlim_t = fs::read_to_string("/proc/sys/fs/nr_open")
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let original = match case.as_str() {
+                "system-max" => libc::rlimit {
+                    rlim_cur: 1024,
+                    rlim_max: ceiling,
+                },
+                "raise-soft" => libc::rlimit {
+                    rlim_cur: 1024,
+                    rlim_max: 4096,
+                },
+                "sufficient" => libc::rlimit {
+                    rlim_cur: 2048,
+                    rlim_max: 4096,
+                },
+                "hard-denied" => libc::rlimit {
+                    rlim_cur: 1024,
+                    rlim_max: 1024,
+                },
+                "server" => libc::rlimit {
+                    rlim_cur: 64,
+                    rlim_max: 4096,
+                },
+                _ => panic!("unknown test case"),
+            };
+            // These limits affect only this test subprocess, never the harness.
+            assert_eq!(
+                unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &original) },
+                0
+            );
+            if unsafe { libc::geteuid() } == 0 {
+                assert_eq!(unsafe { libc::setuid(65534) }, 0);
+            }
+            let c = if case == "server" {
+                config(&["-s", "-w", "4"])
+            } else {
+                config(&["-u", "-c", "1000", "-w", "4", "localhost"])
+            };
+            let result = preflight(&c, 1000);
+            let mut actual = original;
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut actual) },
+                0
+            );
+            if case == "hard-denied" {
+                let error = result.unwrap_err().to_string();
+                assert!(
+                    error.contains("cannot raise RLIMIT_NOFILE to 1128"),
+                    "{error}"
+                );
+                assert!(error.contains("soft=1024, hard=1024"), "{error}");
+                assert!(error.contains("ulimit -n 1128"), "{error}");
+                assert_eq!(actual.rlim_cur, original.rlim_cur);
+            } else {
+                result.unwrap();
+                assert_eq!(actual.rlim_cur, original.rlim_max);
+            }
+            assert_eq!(actual.rlim_max, original.rlim_max);
+            return;
+        }
+        for case in [
+            "system-max",
+            "raise-soft",
+            "sufficient",
+            "hard-denied",
+            "server",
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ports::tests::preflight_adjusts_file_limit_in_isolated_process",
+                    "--nocapture",
+                ])
+                .env(CASE, case)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[test]

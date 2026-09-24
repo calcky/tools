@@ -1,18 +1,14 @@
-Initial release of flowgen, a Linux TCP/UDP session-load generator with a paired server.
+flowgen v0.1.2 improves unattended TCP/UDP load generation and startup defaults.
 
-The v0.1.0 build stopped before publication because the ARM integration-test
-environment could not launch emulated child processes. This release registers
-QEMU interpreters so the complete test suite can run on all three targets.
+- `-T 0` and `-T0` run continuously after warmup until Ctrl+C or SIGTERM. Request timeouts, graceful draining, final statistics and recordings still apply. Upgrade both client and server to use unlimited runs.
+- The server no longer prints periodic statistics by default. Use `flowgen -s --stats` to enable one-second aggregate reports.
+- `-h` and `-v` work anywhere in the command line, including `flowgen -u HOST -T0 -h`.
+- Both client and server try to maximize their process file-descriptor limits up to Linux's `fs.nr_open` ceiling. Without permission to raise the hard limit, they fall back to the existing hard limit. Startup fails only when the resulting limit is insufficient, with an actionable error. No persistent system settings are changed.
 
-- Fixed session count with paced warmup, or continuous session replacement at a configured rate.
-- Per-session request pacing and equal-length responses, with multi-worker and multi-source-IP support.
-- RTT, jitter, timeout, duplicate, late and reordered response accounting.
-- Binary event recordings and offline analysis via `flowgen -R DIR`, including latency percentiles, per-session statistics and CSV reports.
-- Bordered terminal reports with adaptive side-by-side tables, highlighted latency and anomaly counters, and plain output for redirection or `NO_COLOR`.
-- Efficient session scheduling, bounded pending state, reusable buffers and batched UDP I/O.
+Unlimited runs with connection turnover still honor source-tuple policy: without `-Q`, a depleted pool stops replacements while existing sessions continue sending. `-Q` explicitly enables cooldown reuse.
 
-Download the executable for your Linux architecture: `arm` (ARMv7 hard-float), `arm64`, or `x86_64`. All three are statically linked with musl and are distributed without an archive.
+Download the executable for your Linux architecture: `arm` (ARMv7 hard-float), `arm64`, or `x86_64`. All three are statically linked with musl and distributed without an archive. Both client and server use the same executable.
 
-Make the downloaded file executable with `chmod +x flowgen-linux-<arch>`, then run it with `-h` for help. Both client and server use the same executable.
+Make the downloaded file executable with `chmod +x flowgen-linux-<arch>`, then run it with `-h` for help.
 
-Session capacity depends on available file descriptors, source tuples, kernel limits and memory; flowgen does not change system settings automatically.
+The release workflow runs unit and integration tests on all three targets, smoke-tests each executable and checks that no dynamic interpreter or shared-library dependencies remain before publication.

@@ -7,13 +7,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const HELP: &str = "Usage: flowgen -t|-u [options] HOST | flowgen -s [options] | flowgen -R DIR
   -s          Serve TCP/control and UDP (no session count limit)
+  --stats     Print server statistics every second (default: off)
   -t / -u     Client TCP / UDP data protocol; choose exactly one
   -c COUNT    Client target sessions (default: 1000)
   -a SECONDS  Positive warmup duration (default: 10)
   -U RATE     Replacements per second after warmup (default: 0)
   -r PPS      Requests per second per session (default: 10)
   -l BYTES    Application message length, 48..65507 (default: 128)
-  -T SECONDS  Load duration, excluding warmup (default: 60)
+  -T SECONDS  Load duration, excluding warmup; 0 runs until stopped (default: 60)
   -W SECONDS  Setup/request/drain timeout (default: 1)
   -w COUNT    Workers (default: min(4, available CPUs))
   -L MODE     Recording mode: events, summary, or off (default: events)
@@ -28,11 +29,11 @@ pub const HELP: &str = "Usage: flowgen -t|-u [options] HOST | flowgen -s [option
   -4 / -6     IPv4 (default) / IPv6
   -o DIR      Recording directory (default: results/flowgen[-server]-<unique>)
   -R DIR      Offline analysis; cannot be combined with runtime arguments
-  -h / -v     Help / version
-Times accept fractional seconds, from 0.000001 through 86400.
+  -h / -v     Help / version (may appear anywhere)
+Times accept fractional seconds, from 0.000001 through 86400; -T also accepts 0.
 Limits: 1000000 sessions, 256 workers, 1024 source IPs, 1000000 PPS or replacements/s.
 Linux reserved source ports are excluded. No tuple reuse unless -Q is supplied.
-Server mode accepts -s, -w, -L, -A, -S, -D, -b, -p, -4/-6 and -o.
+Server mode accepts -s, --stats, -w, -L, -A, -S, -D, -b, -p, -4/-6 and -o.
 ";
 
 pub(crate) const MAX_SESSIONS: usize = 1_000_000;
@@ -44,6 +45,7 @@ pub(crate) const MAX_SOCKET_BUFFER: usize = i32::MAX as usize / 2;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub server: bool,
+    pub server_stats: bool,
     pub tcp: bool,
     pub host: Option<String>,
     pub sessions: usize,
@@ -72,8 +74,11 @@ fn seconds(value: &str, option: &str) -> Result<Duration, String> {
     let n: f64 = value
         .parse()
         .map_err(|_| format!("{option}: invalid seconds: {value}"))?;
-    if !n.is_finite() || !(0.000001..=86400.0).contains(&n) {
-        return Err(format!("{option}: seconds must be 0.000001..86400"));
+    if !n.is_finite() || (!(option == "-T" && n == 0.0) && !(0.000001..=86400.0).contains(&n)) {
+        return Err(format!(
+            "{option}: seconds must be {}0.000001..86400",
+            if option == "-T" { "0 or " } else { "" }
+        ));
     }
     Duration::try_from_secs_f64(n).map_err(|_| format!("{option}: unrepresentable duration"))
 }
@@ -231,6 +236,7 @@ fn output_directory(server: bool) -> PathBuf {
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
     let mut config = Config {
         server: false,
+        server_stats: false,
         tcp: false,
         host: None,
         sessions: 1000,
@@ -254,7 +260,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
         output: PathBuf::new(),
         analyze: None,
     };
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().flat_map(|arg| {
+        if let Some(value) = arg.strip_prefix("-T").filter(|value| !value.is_empty()) {
+            vec!["-T".to_owned(), value.to_owned()]
+        } else {
+            vec![arg]
+        }
+    });
     let mut seen = HashSet::new();
     let mut source_set = HashSet::new();
     while let Some(arg) = args.next() {
@@ -267,6 +279,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
         if !matches!(
             arg.as_str(),
             "-s" | "-t"
+                | "--stats"
                 | "-u"
                 | "-c"
                 | "-a"
@@ -297,6 +310,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
         }
         match arg.as_str() {
             "-s" => config.server = true,
+            "--stats" => config.server_stats = true,
             "-t" => config.tcp = true,
             "-u" => {}
             "-4" => {}
@@ -379,15 +393,28 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
             || seen.iter().any(|arg| {
                 !matches!(
                     arg.as_str(),
-                    "-s" | "-w" | "-L" | "-A" | "-S" | "-D" | "-b" | "-p" | "-4" | "-6" | "-o"
+                    "-s" | "--stats"
+                        | "-w"
+                        | "-L"
+                        | "-A"
+                        | "-S"
+                        | "-D"
+                        | "-b"
+                        | "-p"
+                        | "-4"
+                        | "-6"
+                        | "-o"
                 )
             })
         {
             return Err(
-                "server mode accepts -s, -w, -L, -A, -S, -D, -b, -p, -4/-6 and -o; -c is client-only".into(),
+                "server mode accepts -s, --stats, -w, -L, -A, -S, -D, -b, -p, -4/-6 and -o; -c is client-only".into(),
             );
         }
     } else {
+        if config.server_stats {
+            return Err("--stats is server-only".into());
+        }
         if seen.contains("-b") {
             return Err("-b is server-only".into());
         }
@@ -434,6 +461,10 @@ mod tests {
     fn client_and_server_defaults_and_unique_output() {
         let client = parse_args(&["-t", "localhost"]).unwrap();
         let server = parse_args(&["-s"]).unwrap();
+        assert!(!server.server_stats);
+        assert!(!client.server_stats);
+        assert!(parse_args(&["-s", "--stats"]).unwrap().server_stats);
+        assert!(parse_args(&["--stats", "-s"]).unwrap().server_stats);
         assert!(client.tcp);
         assert_eq!(client.sessions, 1000);
         assert_eq!(client.recording, "events");
@@ -527,6 +558,9 @@ mod tests {
             vec!["-s", "-t"],
             vec!["-s", "-c", "10000"],
             vec!["-s", "-U", "1"],
+            vec!["-s", "--stats", "--stats"],
+            vec!["-t", "--stats", "localhost"],
+            vec!["-u", "--stats", "localhost"],
             vec!["-t", "-4", "-6", "localhost"],
             vec!["-t", "::1"],
             vec!["-t", "-6", "127.0.0.1"],
@@ -558,6 +592,7 @@ mod tests {
         assert_eq!(c.analyze, Some(PathBuf::from("some/recording")));
         for extra in [
             vec!["-s"],
+            vec!["--stats"],
             vec!["-t"],
             vec!["host"],
             vec!["-o", "out"],
@@ -571,6 +606,22 @@ mod tests {
     }
 
     #[test]
+    fn accepts_unlimited_and_attached_load_duration() {
+        for args in [
+            vec!["-u", "-T", "0", "localhost"],
+            vec!["-t", "localhost", "-T0"],
+        ] {
+            assert_eq!(parse_args(&args).unwrap().duration, Duration::ZERO);
+        }
+        assert_eq!(
+            parse_args(&["-t", "-T0.25", "localhost"]).unwrap().duration,
+            Duration::from_millis(250)
+        );
+        assert!(parse_args(&["-t", "-T0", "-T", "1", "localhost"]).is_err());
+        assert!(parse_args(&["-s", "-T0"]).is_err());
+    }
+
+    #[test]
     fn rejects_nonfinite_zero_overflow_and_impractical_values() {
         for option in ["-a", "-T", "-W", "-Q", "-r", "-U"] {
             for value in ["NaN", "inf", "-inf", "-1", "1e100", "abc"] {
@@ -579,7 +630,7 @@ mod tests {
                     "{option} {value}"
                 );
             }
-            if option != "-U" {
+            if !matches!(option, "-U" | "-T") {
                 assert!(parse_args(&["-t", option, "0", "localhost"]).is_err());
             }
         }
