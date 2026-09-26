@@ -1,4 +1,4 @@
-name: Build ctop
+name: Build cttop
 
 on:
   workflow_dispatch:
@@ -6,14 +6,14 @@ on:
     branches:
       - "**"
     paths:
-      - "ctop/**"
-      - ".github/workflows/ctop-build.yml"
+      - "cttop/**"
+      - ".github/workflows/cttop-build.yml"
     tags:
-      - "ctop-v*"
+      - "cttop-v*"
   pull_request:
     paths:
-      - "ctop/**"
-      - ".github/workflows/ctop-build.yml"
+      - "cttop/**"
+      - ".github/workflows/cttop-build.yml"
 
 permissions:
   contents: read
@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: ctop
+        working-directory: cttop
     steps:
       - uses: actions/checkout@v4
 
@@ -35,12 +35,12 @@ jobs:
           components: rustfmt, clippy
 
       - name: Check release version
-        if: startsWith(github.ref, 'refs/tags/ctop-v')
+        if: startsWith(github.ref, 'refs/tags/cttop-v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          test "$RELEASE_TAG" = "ctop-v$version"
+          test "$RELEASE_TAG" = "cttop-v$version"
 
       - name: Check formatting and lint
         run: |
@@ -55,7 +55,7 @@ jobs:
       - name: Test static-file and pipe interactions without privileges
         run: |
           cargo build --locked
-          CTOP_BIN="$PWD/target/debug/ctop" python3 tests/offline.py
+          CTTOP_BIN="$PWD/target/debug/cttop" python3 tests/offline.py
 
   build:
     name: Linux ${{ matrix.arch }} (static musl)
@@ -101,20 +101,20 @@ jobs:
           echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
 
       - name: Run unit tests
-        working-directory: ctop
+        working-directory: cttop
         run: cross test --locked --target "$TARGET"
 
       - name: Build static executable
-        working-directory: ctop
+        working-directory: cttop
         run: cross build --release --locked --target "$TARGET"
 
       - name: Smoke test executable
-        working-directory: ctop
+        working-directory: cttop
         run: cross run --release --locked --target "$TARGET" -- -v
 
       - name: Verify static linkage and prepare executable
         run: |
-          binary="ctop/target/$TARGET/release/ctop"
+          binary="cttop/target/$TARGET/release/cttop"
           readelf -lW "$binary" > "$RUNNER_TEMP/elf-program-headers.txt"
           readelf -dW "$binary" > "$RUNNER_TEMP/elf-dynamic-section.txt"
           if grep -E 'INTERP' "$RUNNER_TEMP/elf-program-headers.txt" || \
@@ -123,19 +123,19 @@ jobs:
             exit 1
           fi
           file "$binary"
-          install -D -m 755 "$binary" "dist/ctop-linux-$ARCH"
+          install -D -m 755 "$binary" "dist/cttop-linux-$ARCH"
 
       - name: Upload executable
         uses: actions/upload-artifact@v7.0.1
         with:
-          path: dist/ctop-linux-${{ matrix.arch }}
+          path: dist/cttop-linux-${{ matrix.arch }}
           archive: false
           if-no-files-found: error
           retention-days: 30
 
   release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ctop-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cttop-v')
     needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -150,23 +150,23 @@ jobs:
 
       - name: Check release version
         run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("ctop/Cargo.toml", "rb"))["package"]["version"])')
-          test "$RELEASE_TAG" = "ctop-v$version"
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("cttop/Cargo.toml", "rb"))["package"]["version"])')
+          test "$RELEASE_TAG" = "cttop-v$version"
 
       - name: Download executables
         uses: actions/download-artifact@v8
         with:
-          pattern: ctop-linux-*
+          pattern: cttop-linux-*
           path: dist
           merge-multiple: true
 
       - name: Publish executables
         run: |
           for arch in arm arm64 x86_64; do
-            test -s "dist/ctop-linux-$arch"
+            test -s "dist/cttop-linux-$arch"
           done
           gh release create "$RELEASE_TAG" \
-            dist/ctop-linux-arm dist/ctop-linux-arm64 dist/ctop-linux-x86_64 \
-            --draft --verify-tag --title "ctop ${RELEASE_TAG#ctop-}" \
-            --notes-file ctop/RELEASE.md
+            dist/cttop-linux-arm dist/cttop-linux-arm64 dist/cttop-linux-x86_64 \
+            --draft --verify-tag --title "cttop ${RELEASE_TAG#cttop-}" \
+            --notes-file cttop/RELEASE.md
           gh release edit "$RELEASE_TAG" --draft=false

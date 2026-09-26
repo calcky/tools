@@ -1,6 +1,6 @@
 """Unprivileged static-file and controlling-terminal regression checks.
 
-Requires python3-pyte. Run with CTOP_BIN pointing to the compiled executable.
+Requires python3-pyte. Run with CTTOP_BIN pointing to the compiled executable.
 """
 import fcntl
 import os
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pyte
 
-BIN = os.environ.get("CTOP_BIN", str(Path(__file__).resolve().parents[1] / "target/release/ctop"))
+BIN = os.environ.get("CTTOP_BIN", str(Path(__file__).resolve().parents[1] / "target/release/cttop"))
 DUMP = (
     "tcp 6 400 ESTABLISHED src=10.0.0.2 dst=198.51.100.2 sport=1234 dport=443 "
     "packets=12 bytes=1200 src=198.51.100.2 dst=203.0.113.1 sport=443 dport=40000 "
@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory() as directory:
     path.write_text(DUMP)
     for args, data in [(["-f", str(path)], None), (["-f"], DUMP), (["-f", "-"], DUMP)]:
         output = report([*args, "-g", "none", "-c", "9"], data)
-        assert output.count("ctop |") == 1
+        assert output.count("cttop |") == 1
         assert "STATIC" in output and "2 connections" in output
         assert "0x10" in output and "1200" in output
         assert "\x1b" not in output

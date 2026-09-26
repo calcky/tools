@@ -3,3 +3,5 @@
 **/target/
 __pycache__/
 *.pyc
+/site/
+/.venv-docs/

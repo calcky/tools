@@ -1,4 +1,4 @@
-# ctop
+# cttop
 
 Read-only Linux conntrack monitoring for gateways and application servers.
 Combines an initial Netlink snapshot, NEW/UPDATE/DESTROY events and periodic
@@ -6,35 +6,34 @@ full calibration. Uses the current network namespace; no packet capture,
 firewall changes or automatic sysctl changes.
 
 ```sh
-make ctop                       # from the repository root
-sudo ./bin/ctop                 # live window, group by original source IP
-sudo ./bin/ctop -g none         # one conntrack entry per row
-sudo ./bin/ctop -g none -p tcp -D 443
-sudo ./bin/ctop -g dst,dport,proto
-sudo ./bin/ctop -g src,dst -p tcp
-sudo ./bin/ctop -g mark
-sudo ./bin/ctop -g mark,src
-sudo ./bin/ctop -g dport -r 1    # sample bandwidth roughly every second
-sudo ./bin/ctop -N -g src,sport
-sudo ./bin/ctop -s 192.168.1.10 -D 443 -p tcp
-sudo ./bin/ctop -b -c 3         # plain reports
-./bin/ctop -f conntrack.txt     # static snapshot, no root required
-sudo conntrack -L | ./bin/ctop -f
-sudo ip netns exec router ./bin/ctop
+make cttop                       # from the repository root
+sudo ./bin/cttop                 # live window, group by original source IP
+sudo ./bin/cttop -g none         # one conntrack entry per row
+sudo ./bin/cttop -g none -p tcp -D 443
+sudo ./bin/cttop -g dst,dport,proto
+sudo ./bin/cttop -g src,dst -p tcp
+sudo ./bin/cttop -g mark
+sudo ./bin/cttop -g mark,src
+sudo ./bin/cttop -g dport -r 1    # sample bandwidth roughly every second
+sudo ./bin/cttop -N -g src,sport
+sudo ./bin/cttop -s 192.168.1.10 -D 443 -p tcp
+sudo ./bin/cttop -b -c 3         # plain reports
+./bin/cttop -f conntrack.txt     # static snapshot, no root required
+sudo conntrack -L | ./bin/cttop -f
+sudo ip netns exec router ./bin/cttop
 ```
 
 Build requires Rust 1.88+. Running requires CAP_NET_ADMIN in the target network
 namespace, an active conntrack subsystem and ctnetlink support. `sudo` is the usual
 way to obtain permission. Containers need access to the namespace being diagnosed;
 running inside an ordinary container shows that container's connections only.
-The name overlaps some unrelated container-monitoring tools, so use `./bin/ctop`
-or the full installed path when both are present.
-
-Prebuilt musl static executables are available from the
-[ctop releases](https://github.com/calcky/tools/releases/tag/ctop-v0.1.0):
-`ctop-linux-arm` (ARMv7 hard-float), `ctop-linux-arm64`, and `ctop-linux-x86_64`.
-They are direct binary downloads; apply `chmod +x` before running.
-The `Build ctop` workflow tests all three targets, checks static linkage and
+The tool is named `cttop` to distinguish it from container-monitoring tools.
+Future releases provide `cttop-linux-arm` (ARMv7 hard-float),
+`cttop-linux-arm64`, and `cttop-linux-x86_64` as direct musl static binary downloads.
+Apply `chmod +x` before running. The previously published
+[ctop v0.1.0](https://github.com/calcky/tools/releases/tag/ctop-v0.1.0)
+still uses the old name.
+The `Build cttop` workflow tests all three targets, checks static linkage and
 publishes version-tagged releases.
 
 ## Options
@@ -64,10 +63,10 @@ port aggregation displays `-` for protocols without ports.
 
 ```sh
 sudo conntrack -L -o extended > conntrack.txt
-./bin/ctop -f conntrack.txt -g dst,dport,proto
-./bin/ctop -f conntrack.txt -g mark,src
-sudo conntrack -L | ./bin/ctop -f
-./bin/ctop -f conntrack.txt -g none -b
+./bin/cttop -f conntrack.txt -g dst,dport,proto
+./bin/cttop -f conntrack.txt -g mark,src
+sudo conntrack -L | ./bin/cttop -f
+./bin/cttop -f conntrack.txt -g none -b
 ```
 
 Static mode needs no CAP_NET_ADMIN and does not open a netlink socket or read
@@ -192,7 +191,7 @@ Packet/byte counters require per-entry accounting. Missing counters show `N/A`;
 `*` marks partial totals, with directional coverage counts in group details.
 `Packets` in the main table sums both directions; details and plain reports show
 original/reply separately. These are cumulative counters of **currently cached live
-connections**, not totals since ctop started; deleting a connection removes its
+connections**, not totals since cttop started; deleting a connection removes its
 counters from the group. NAT view does not swap the counter directions.
 
 Bandwidth uses per-connection byte deltas between two successful full snapshots,
@@ -206,7 +205,7 @@ never advance the bandwidth baseline because they are not per-packet notificatio
 No extra polling is performed for bandwidth.
 
 `nf_conntrack_acct` only provides counters for entries created with accounting
-enabled; ctop does not change it. Connection age uses kernel
+enabled; cttop does not change it. Connection age uses kernel
 timestamps when available, otherwise it is labeled observed duration. Remaining
 timeout is the value at sampling time and is never used as connection age.
 
@@ -232,22 +231,22 @@ million-entry production tables. Increase `-i`/`-r` to reduce refresh work.
 ## Verification
 
 ```sh
-make check-ctop
+make check-cttop
 ```
 
 Unit tests cover Netlink framing, IPv4/IPv6 and ICMP parsing, NAT/zone grouping,
 filters, snapshot/event reconciliation, stale generations, counter availability,
 state age and narrow/wide monochrome terminal layouts.
 
-`CTOP_BIN=./bin/ctop python3 ctop/tests/offline.py` checks static files, piped
+`CTTOP_BIN=./bin/cttop python3 cttop/tests/offline.py` checks static files, piped
 input, counters, NAT, filters, malformed input and terminal interactions without
 root. It requires Python 3 with `pyte`. Parser tests also cover ICMP identifiers,
 directional zones and unavailable values; static views never accrue observed age.
 
 `tests/live.py` exercises real IPv4/IPv6 TCP/UDP, DNAT/SNAT, lifecycle events and
 PTY interactions. It requires Python 3 with `pyte`, iptables, conntrack, CAP_NET_ADMIN and
-`CTOP_LIVE_ISOLATED=1`. Run **only in a disposable isolated network namespace**:
-the harness installs test firewall rules. Set `CTOP_BIN` to the built executable
+`CTTOP_LIVE_ISOLATED=1`. Run **only in a disposable isolated network namespace**:
+the harness installs test firewall rules. Set `CTTOP_BIN` to the built executable
 and provide a writable `/checks` directory for the PTY transcript. Optional Docker
 `--sysctl net.netfilter.nf_conntrack_acct=1` and
 `--sysctl net.netfilter.nf_conntrack_timestamp=1` exercise accounting and timestamps.

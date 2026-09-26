@@ -233,7 +233,7 @@ impl View {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(
-                " ctop | {} | {} ",
+                " cttop | {} | {} ",
                 h.namespace,
                 if self.nat { "NAT" } else { "original" }
             ))
@@ -752,7 +752,7 @@ impl View {
             ("Bandwidth", "Original/reply bit/s, averaged over full snapshots (-r, default 5s)"),
             ("Packets / bytes", "Cumulative counters of current connections; deleted flows excluded"),
             ("N/A / *", "Missing data / partial coverage; bandwidth needs two valid samples"),
-            ("Accounting OFF", "Counters unavailable for connections without accounting; ctop never changes sysctls"),
+            ("Accounting OFF", "Counters unavailable for connections without accounting; cttop never changes sysctls"),
             ("New/s / End/s", "Observed creation/deletion rates; deletion does not mean successful close"),
             ("Aged / UNREPLIED", "Observed-age hints, not confirmed faults; one-way UDP can be legitimate"),
             ("Collector", e.message.as_str()),

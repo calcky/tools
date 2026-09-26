@@ -514,7 +514,7 @@ impl View {
         let area = f.area();
         if area.width < 70 || area.height < 20 {
             f.render_widget(
-                Paragraph::new("ctop: terminal needs at least 70 x 20 (q quits)"),
+                Paragraph::new("cttop: terminal needs at least 70 x 20 (q quits)"),
                 area,
             );
             return;
@@ -727,7 +727,7 @@ impl View {
     pub fn batch(&self, e: &Engine, o: &Options, out: &mut impl Write) -> io::Result<()> {
         writeln!(
             out,
-            "ctop | {} | {} | group {} | entries {}/{} | gaps {} | {}",
+            "cttop | {} | {} | group {} | entries {}/{} | gaps {} | {}",
             e.health.namespace,
             if self.nat { "NAT" } else { "original" },
             if self.drill.is_some() {

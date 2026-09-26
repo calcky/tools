@@ -1,7 +1,7 @@
 """Run inside an isolated disposable network namespace with CAP_NET_ADMIN.
 
 The test adds OUTPUT firewall rules only in that namespace. Never run directly
-on a production host. CTOP_LIVE_ISOLATED=1 is required. Enable accounting and
+on a production host. CTTOP_LIVE_ISOLATED=1 is required. Enable accounting and
 timestamps at container creation with --sysctl to test those optional fields.
 """
 import fcntl
@@ -19,8 +19,8 @@ import codecs
 import pyte
 
 
-assert os.environ.get("CTOP_LIVE_ISOLATED") == "1", "isolated namespace required"
-BIN = os.environ.get("CTOP_BIN", "/ctop-src/target/debug/ctop")
+assert os.environ.get("CTTOP_LIVE_ISOLATED") == "1", "isolated namespace required"
+BIN = os.environ.get("CTTOP_BIN", "/cttop-src/target/debug/cttop")
 
 
 def cmd(*args):

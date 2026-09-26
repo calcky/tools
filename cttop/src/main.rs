@@ -1,5 +1,5 @@
 #[cfg(not(target_os = "linux"))]
-compile_error!("ctop requires Linux conntrack");
+compile_error!("cttop requires Linux conntrack");
 mod engine;
 mod model;
 mod netlink;
@@ -23,7 +23,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         options::Command::Version => {
-            println!("ctop {}", env!("CARGO_PKG_VERSION"));
+            println!("cttop {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         options::Command::Run(o) => o,
@@ -34,7 +34,9 @@ fn run() -> Result<(), String> {
     let mut engine = if let Some(source) = &o.input {
         if source == "-" {
             if io::stdin().is_terminal() {
-                return Err("-f requires a file or piped input; try conntrack -L | ctop -f".into());
+                return Err(
+                    "-f requires a file or piped input; try conntrack -L | cttop -f".into(),
+                );
             }
             offline::load(io::stdin().lock(), "stdin".into())?
         } else {
@@ -176,7 +178,7 @@ fn run_offline(
 fn diagnostic(e: io::Error) -> String {
     if matches!(e.raw_os_error(), Some(libc::EPERM | libc::EACCES)) {
         format!(
-            "{e}; run with CAP_NET_ADMIN in the target network namespace (for example sudo ctop)"
+            "{e}; run with CAP_NET_ADMIN in the target network namespace (for example sudo cttop)"
         )
     } else {
         e.to_string()
@@ -185,7 +187,7 @@ fn diagnostic(e: io::Error) -> String {
 fn main() {
     if let Err(error) = run() {
         if !error.contains("Broken pipe") {
-            eprintln!("ctop: {error}");
+            eprintln!("cttop: {error}");
             std::process::exit(1);
         }
     }

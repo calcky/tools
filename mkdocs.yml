@@ -1,0 +1,90 @@
+site_name: Linux tools
+site_description: Linux 网络调试、监控与测试工具
+site_url: !ENV [READTHEDOCS_CANONICAL_URL, "http://127.0.0.1:8000/"]
+repo_url: https://github.com/calcky/tools
+repo_name: calcky/tools
+edit_uri: edit/master/docs/
+docs_dir: docs
+site_dir: site
+strict: true
+watch:
+  - irqtop/README.md
+  - netping/README.md
+  - flowgen/README.md
+  - cttop/README.md
+  - netlens/README.md
+  - netlens/docs
+
+theme:
+  name: material
+  language: zh
+  font: false
+  palette:
+    - scheme: default
+      primary: teal
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: 切换深色模式
+    - scheme: slate
+      primary: teal
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: 切换浅色模式
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search:
+      lang: [en, zh]
+  - gen-files:
+      scripts:
+        - docs/generate.py
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+exclude_docs: |
+  requirements.txt
+  generate.py
+
+validation:
+  nav:
+    omitted_files: info
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    anchors: warn
+
+nav:
+  - 概览: index.md
+  - 快速开始:
+      - 安装与构建: getting-started.md
+      - 常见任务: tasks.md
+  - 工具手册:
+      - irqtop / irqstat: irqtop/README.md
+      - netping: netping/README.md
+      - flowgen: flowgen/README.md
+      - cttop: cttop/README.md
+      - netlens:
+          - 使用说明: netlens/README.md
+          - 命令与交互: netlens/docs/cli.md
+          - 指标含义: netlens/docs/monitor-metrics.md
+          - 支持范围: netlens/docs/support-matrix.md
+          - 数据包路径: netlens/docs/packet-path.md
+  - 开发与发布:
+      - 构建、检查与发布: development.md
+      - 文档维护与托管: documentation.md

@@ -90,7 +90,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctop"
+name = "cttop"
 version = "0.1.0"
 dependencies = [
  "crossterm",

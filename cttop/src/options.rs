@@ -1,8 +1,8 @@
 use crate::model::{Field, Filter};
 use std::time::Duration;
 
-pub const HELP: &str = "ctop - read-only conntrack session monitor
-Usage: ctop [options]
+pub const HELP: &str = "cttop - read-only conntrack session monitor
+Usage: cttop [options]
   -f [FILE]  Load a static conntrack -L dump; omitted FILE or - reads stdin
   -g FIELDS  Group by src,sport,dst,dport,proto,zone,mark (default src); none = one CT per row
   -N         Translated forward/NAT endpoint view (default original)
@@ -27,11 +27,11 @@ Enter drill into group, Esc up/clear, arrows or j/k select, PgUp/PgDn page, [/] 
 Ctrl+U clears an edit field, h help (h/Esc closes), q/Ctrl+C quit.
 
 Live mode requires CAP_NET_ADMIN; static files need no privileges. Example:
-  ctop -f conntrack.txt -g mark
-  conntrack -L | ctop -f
-  sudo ctop -g dst,dport,proto -p tcp
-  sudo ip netns exec router ctop -N
-  sudo ctop -b -c 3 -g src,dst
+  cttop -f conntrack.txt -g mark
+  conntrack -L | cttop -f
+  sudo cttop -g dst,dport,proto -p tcp
+  sudo ip netns exec router cttop -N
+  sudo cttop -b -c 3 -g src,dst
 
 New/s and End/s are observed lifecycle events, not success/failure rates.
 Accounting, events and timestamps are never enabled automatically.
