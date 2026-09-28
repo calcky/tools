@@ -1,0 +1,137 @@
+name: Build bpftrace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "bpftrace/**"
+      - ".github/workflows/bpftrace-build.yml"
+    tags:
+      - "bpftrace-v*"
+  pull_request:
+    paths:
+      - "bpftrace/**"
+      - ".github/workflows/bpftrace-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (fully static)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            runner: ubuntu-24.04-arm
+            timeout: 240
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            timeout: 90
+          - arch: x86_64
+            runner: ubuntu-24.04
+            timeout: 90
+    env:
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build static executable
+        run: ./bpftrace/build-static.sh "$ARCH"
+
+      - name: Verify executable and checksum
+        run: |
+          binary="bpftrace/dist/bpftrace-linux-$ARCH"
+          test -s "$binary"
+          (cd bpftrace/dist && sha256sum --check "bpftrace-linux-$ARCH.sha256")
+          readelf -lW "$binary" > "$RUNNER_TEMP/elf-program-headers.txt"
+          readelf -dW "$binary" > "$RUNNER_TEMP/elf-dynamic-section.txt"
+          machine=$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+          case "$ARCH:$machine" in
+            arm:ARM|arm64:AArch64|x86_64:Advanced\ Micro\ Devices\ X86-64) ;;
+            *) echo "Unexpected ELF architecture: $machine" >&2; exit 1 ;;
+          esac
+          if grep -q 'INTERP' "$RUNNER_TEMP/elf-program-headers.txt"; then
+            echo "Unexpected ELF interpreter" >&2
+            exit 1
+          fi
+          needed=$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' "$RUNNER_TEMP/elf-dynamic-section.txt")
+          if test -n "$needed"; then
+            echo "Unexpected dynamic dependencies: $needed" >&2
+            exit 1
+          fi
+          file "$binary"
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          path: bpftrace/dist/bpftrace-linux-${{ matrix.arch }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/bpftrace-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check release version
+        run: |
+          version=$(tr -d '[:space:]' < bpftrace/VERSION)
+          test "$RELEASE_TAG" = "bpftrace-v$version"
+
+      - name: Download executables
+        uses: actions/download-artifact@v8
+        with:
+          pattern: bpftrace-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release artifacts
+        run: |
+          for arch in arm arm64 x86_64; do
+            test -s "dist/bpftrace-linux-$arch"
+            (cd dist && sha256sum "bpftrace-linux-$arch" > "bpftrace-linux-$arch.sha256")
+          done
+
+      - name: Publish executables
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/bpftrace-linux-arm \
+            dist/bpftrace-linux-arm64 \
+            dist/bpftrace-linux-x86_64 \
+            dist/bpftrace-linux-arm.sha256 \
+            dist/bpftrace-linux-arm64.sha256 \
+            dist/bpftrace-linux-x86_64.sha256 \
+            --draft --verify-tag --title "bpftrace ${RELEASE_TAG#bpftrace-}" \
+            --notes-file bpftrace/README.md
+          gh release edit "$RELEASE_TAG" --draft=false
