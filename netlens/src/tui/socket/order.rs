@@ -64,8 +64,12 @@ impl SocketSort {
             ),
             Self::RxQueue | Self::TxQueue | Self::Rtt | Self::Mss => {
                 let value = |socket: &InetSocketSnapshot| match self {
-                    Self::RxQueue => Some(u128::from(socket.receive_queue())),
-                    Self::TxQueue => Some(u128::from(socket.send_queue())),
+                    Self::RxQueue => (socket.queue_kind()
+                        != crate::monitor::socket_table::QueueKind::Unavailable)
+                        .then_some(u128::from(socket.receive_queue())),
+                    Self::TxQueue => (socket.queue_kind()
+                        != crate::monitor::socket_table::QueueKind::Unavailable)
+                        .then_some(u128::from(socket.send_queue())),
                     Self::Rtt => socket.tcp().map(|tcp| u128::from(tcp.rtt_micros)),
                     Self::Mss => socket.tcp().map(|tcp| u128::from(tcp.send_mss_bytes)),
                     _ => unreachable!(),
@@ -135,6 +139,7 @@ pub(in crate::tui) struct SocketOrder {
     snapshot: Option<Arc<SocketTableSnapshot>>,
     filter: Option<SocketFilter>,
     indices: Vec<usize>,
+    peers: Vec<Option<usize>>,
     sort: SocketSort,
     descending: bool,
 }
@@ -145,6 +150,7 @@ impl Default for SocketOrder {
             snapshot: None,
             filter: None,
             indices: Vec::new(),
+            peers: Vec::new(),
             sort: SocketSort::default(),
             descending: true,
         }
@@ -175,12 +181,27 @@ impl SocketOrder {
             return;
         }
         self.indices.clear();
+        self.peers = snapshot.local_peer_indices();
         self.indices.extend(
             snapshot
                 .sockets()
                 .iter()
                 .enumerate()
-                .filter(|(_, socket)| filter.is_none_or(|filter| filter.matches(socket)))
+                .filter(|(index, socket)| {
+                    let peer = self.peers[*index].map(|index| &snapshot.sockets()[index]);
+                    // Stable endpoint ordering also survives reconnects with new kernel cookies.
+                    // This is presentation order, not an inference about client/server roles.
+                    peer.is_none_or(|peer| {
+                        socket
+                            .local()
+                            .canonical()
+                            .cmp(&peer.local().canonical())
+                            .then_with(|| socket.row_key().cmp(peer.row_key()))
+                            .is_lt()
+                    }) && filter.is_none_or(|filter| {
+                        filter.matches(socket) || peer.is_some_and(|peer| filter.matches(peer))
+                    })
+                })
                 .map(|(index, _)| index),
         );
         self.snapshot = Some(snapshot);
@@ -218,6 +239,7 @@ impl SocketOrder {
         self.snapshot = None;
         self.filter = None;
         self.indices.clear();
+        self.peers.clear();
     }
 
     pub(in crate::tui) fn shown_count(&self) -> usize {
@@ -230,9 +252,10 @@ impl SocketOrder {
 
     pub(in crate::tui) fn position(&self, key: &SocketRowKey) -> Option<usize> {
         self.indices.iter().position(|&index| {
-            self.snapshot
-                .as_ref()
-                .is_some_and(|snapshot| snapshot.sockets()[index].row_key() == key)
+            self.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot.sockets()[index].row_key() == key
+                    || self.peer(index).is_some_and(|peer| peer.row_key() == key)
+            })
         })
     }
 
@@ -245,6 +268,13 @@ impl SocketOrder {
 
     pub(in crate::tui) fn indices(&self) -> &[usize] {
         &self.indices
+    }
+
+    pub(in crate::tui) fn peer(&self, index: usize) -> Option<&InetSocketSnapshot> {
+        self.snapshot
+            .as_ref()?
+            .sockets()
+            .get(self.peers.get(index).copied().flatten()?)
     }
 
     pub(in crate::tui) const fn sort(&self) -> SocketSort {
@@ -267,6 +297,41 @@ impl SocketOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_connection_keeps_direction_across_sort_filter_and_dump_order() {
+        let mut order = SocketOrder::default();
+        let initial = Arc::new(crate::monitor::socket_table::synthetic_local_socket_pair());
+        let primary = initial.sockets()[0].row_key().clone();
+        let peer = initial.sockets()[1].row_key().clone();
+        for reverse in [false, true] {
+            let snapshot = Arc::new(
+                crate::monitor::socket_table::synthetic_local_socket_pair_at(2, reverse, false),
+            );
+            for query in ["", "src port 42000", "src port 443", "dst port 42000"] {
+                let filter = SocketFilter::parse(query).unwrap();
+                order.update(Arc::clone(&snapshot), filter.as_ref());
+                for sort in SocketSort::ALL {
+                    order.select_sort(sort);
+                    order.reverse();
+                    assert_eq!(order.shown_count(), 1);
+                    assert_eq!(order.socket(0).unwrap().row_key(), &primary);
+                    assert_eq!(order.position(&primary), Some(0));
+                    assert_eq!(order.position(&peer), Some(0));
+                    assert_eq!(order.peer(order.indices()[0]).unwrap().row_key(), &peer);
+                }
+            }
+        }
+        let reconnected =
+            Arc::new(crate::monitor::socket_table::synthetic_local_socket_pair_at(3, true, true));
+        order.update(reconnected, None);
+        assert_eq!(order.shown_count(), 1);
+        assert_eq!(
+            order.socket(0).unwrap().local().port(),
+            Some(42000),
+            "reconnection must not reverse endpoints when cookie allocation order changes"
+        );
+    }
 
     #[test]
     fn sorting_matches_socket_fields_and_keeps_missing_last() {
@@ -300,4 +365,23 @@ mod tests {
             "unchanged data reuses its order"
         );
     }
+}
+#[test]
+fn process_filter_matches_either_local_peer_without_reversing_the_row() {
+    let snapshot = Arc::new(crate::monitor::socket_table::synthetic_local_socket_pair());
+    let mut order = SocketOrder::default();
+    order.update(Arc::clone(&snapshot), None);
+    let primary = order.socket(0).unwrap().row_key().clone();
+    for query in ["proc client", "proc SERVER", "proc worker"] {
+        let filter = SocketFilter::parse(query).unwrap();
+        order.update(Arc::clone(&snapshot), filter.as_ref());
+        assert_eq!(order.shown_count(), 1);
+        assert_eq!(order.socket(0).unwrap().row_key(), &primary);
+        assert!(order.peer(order.indices()[0]).is_some());
+    }
+    order.update(
+        snapshot,
+        SocketFilter::parse("proc absent").unwrap().as_ref(),
+    );
+    assert_eq!(order.shown_count(), 0);
 }

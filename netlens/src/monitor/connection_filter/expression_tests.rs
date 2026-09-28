@@ -172,7 +172,7 @@ fn port_predicates_require_transport_protocols() {
         let error: &'static str = ConnectionFilter::parse(query).unwrap_err();
         assert_eq!(
             error,
-            "port and portrange qualifiers require tcp, udp or sctp"
+            "port and portrange qualifiers require tcp, udp, dccp or sctp"
         );
     }
     // Explicit Boolean composition is valid, but cannot match a portless protocol.

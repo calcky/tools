@@ -369,11 +369,28 @@ chain identity. Rules without a counter remain visible as `NO COUNTER` rather
 than zero. Native nftables and nft-backed iptables remain separate views and
 must not be added together.
 
-The Socket tab opens the current namespace's live IPv4/IPv6 TCP/UDP socket
-table. Each socket stays on one row with PROTO, STATE, LOCAL, REMOTE, PROCESS,
+The Socket tab opens the current namespace's live socket tables using native
+`NETLINK_SOCK_DIAG`: IPv4/IPv6 TCP, UDP, RAW, DCCP, SCTP, MPTCP; UNIX
+stream/datagram/seqpacket; PACKET raw/datagram; NETLINK; VSOCK; TIPC; and XDP.
+This covers the socket families/types listed by `ss`, not every `ss` diagnostic
+option or destructive operation. Kernel-disabled diagnostic families are listed
+as unavailable without hiding the working families. RAW falls back to
+`/proc/self/net/raw{,6}` when its diagnostic module is absent; these rows lack a
+stable kernel cookie and therefore do not claim cached process attribution.
+
+Each socket (or merged local TCP/UNIX connection) stays on one row with PROTO, STATE, LOCAL, REMOTE, PROCESS,
 RECV-Q, SEND-Q, RTT, MSS and CC. TCP-only RTT, send MSS and congestion control
-remain `n/a` for UDP and listeners. Queues show bytes, except a listening TCP
-socket's pending/max accept-backlog counts. Window, traffic and limit evidence
+remain `n/a` for other protocols and listeners. Endpoints preserve UNIX paths
+(`@name` for abstract sockets, `*` for unnamed sockets), netlink protocol/port IDs,
+interface indexes, 32-bit VSOCK CID/ports and TIPC node/references. RAW displays
+IP protocol numbers rather than pretending they are transport ports. XDP detail
+includes queue ID, configured ring entries, UMEM and available error counters.
+Queues show bytes for INET (TCP payload, UDP/RAW allocated memory) and UNIX stream
+receives, packets for TIPC, and allocated memory (`mem`) for PACKET/NETLINK and
+UNIX sends. UNIX datagram RECV-Q is the next datagram size (`next`), not the number
+of queued packets. Listener queues are pending/max
+backlog counts. VSOCK/XDP queue occupancy is `n/a`; ring capacity is not occupancy.
+Missing UID, counters and TCP diagnostics remain `n/a`. Window, traffic and limit evidence
 stay in the selected connection's detail. Compact identity and three independent
 module stacks keep the regular wide-terminal detail on one screen where it fits.
 Labels and values are separated and aligned; narrower terminals and all-fields
@@ -383,13 +400,48 @@ mode remain scrollable. Process ownership can be partial when
 Socket counters, TCP_INFO and connection membership retain the selected sampling
 interval. Process attribution runs independently: full scans every 10 seconds,
 with new or invalidated connections requesting a scan at most every 2 seconds.
-Until resolved, these connections show an unknown owner. The process-map status
+New sockets also get a bounded fast lookup in previously identified processes at
+each sample: up to 64 processes and 4096 FDs, with a 10ms scan budget. Up to 32
+recent TCP owner PIDs are checked first; the remaining candidates rotate. Full
+scans retain process hints even when a socket has already changed from the requested
+inode, and an earlier negative scan does not prevent a later positive fast match.
+Up to 256 process hints survive gaps between short connections. These hints only
+control scan order. Only fresh inode/FD matches with validated PID
+start times are accepted; a listener PID alone is never used as a connection owner.
+Once discovered, repeated short connections can resolve without waiting for the
+next full scan; a previously unseen process can still need a discovery scan.
+Connections that end before sampling/scanning can still have no attributed owner.
+Until scanned, new connections show `resolving`. A completed scan without a match
+shows `unmatched`; `restricted` means the scan encountered unreadable processes,
+`partial` means other scan errors or limits, and `denied`/`unavailable` indicate
+that process scanning itself failed. These labels describe attribution coverage,
+not a socket error. UID remains available in connection detail. The process-map status
 reports its observation age and whether a refresh is in flight, in both the list
 and connection detail. Cached attribution is matched by socket cookie/inode and
 validated against PID start time and a matching FD; closed or reused identities
 are discarded. Process names can lag by one attribution refresh. Cache entries
 expire after 20 seconds if scanning stalls. No process scans run after leaving
 the socket session.
+
+PROCESS in the table shows the LOCAL endpoint's process and, for a matched local
+TCP peer, `local PID/name <-> peer PID/name`. Each row puts its LOCAL process first;
+sorting by PROCESS still uses that local process. Narrow columns shorten each
+side independently. A TCP connection between two local applications appears as
+one merged row with a stable representative chosen by normalized endpoint address
+and port (socket identity breaks ties), independently of queue activity, row sorting,
+dump order or new kernel cookies after reconnecting. LOCAL is the representative endpoint,
+not a claim about which side initiated the connection. The listener remains a separate
+row with only its own process. Filters may match either endpoint's socket; changing
+the filter does not reverse the merged row. List metrics belong to LOCAL; they are
+not sums of both sockets. Connection detail shows LOCAL PROCESS and PEER PROCESS,
+plus LOCAL TCP / PEER TCP state, queues, RTT, MSS and congestion control,
+when a unique reverse TCP socket is observed in the same namespace, including
+IPv4-mapped IPv6 endpoints. UNIX uses mutual kernel peer-inode references;
+path names alone never establish a peer relationship. The peer is matched from the full retained table,
+independently of the display filter. Missing or ambiguous reverse sockets show
+`not observed in this namespace`, not a guessed listener owner. UDP peer ownership
+is not inferred from a bound port. Each row's queues and TCP metrics remain local
+to that socket; a missing/closed peer is discarded on the next sample.
 
 In the socket table, use `j`/`k` or the arrow keys to select one socket and
 press `Enter` to open its diagnostic detail. In both Socket and Conntrack,
@@ -414,6 +466,18 @@ Legacy `host=`, `src=`, `dst=`, `port=`, `sport=`, `dport=` and `proto=` filters
 remain supported, with implicit AND and their previous NAT-aware unqualified
 host/port matching. Do not mix key=value tokens with the new expression syntax.
 Filters are compiled once per edit; evaluating rows performs no DNS or collection.
+Socket also accepts single type filters such as `unix`, `unix_stream`,
+`unix_dgram`, `unix_seqpacket`, `packet`, `packet_raw`, `packet_dgram`, `netlink`,
+`vsock`, `vsock_stream`, `vsock_dgram`, `tipc`, `xdp`, `raw`, `dccp`, `sctp`,
+or `mptcp` (optionally prefixed with `type=`). `path=/run/` or `path=@name`
+matches UNIX names by substring. These type/path selectors are standalone;
+IP/port expressions apply only to IP sockets. `Ctrl+u` returns to all types.
+`proc cc-switch` filters by a case-insensitive process-name
+substring. This is a standalone selector, matching any attributed owner of any
+socket type; either endpoint can match a merged local connection without changing
+its orientation. Names come from `/proc/<pid>/comm` (normally limited to 15 bytes),
+not command-line arguments. Unresolved or unavailable names do not match; rows
+appear automatically when attribution becomes available. `Ctrl+u` clears it.
 Filters search only the retained snapshot; collection continues at the same cadence
 while that page is active, without resetting counters when filtering changes.
 `TRUNCATED` means matching connections may have been omitted by collection limits.
@@ -523,7 +587,7 @@ The current implementation reads:
 
 - Socket and protocol counters from `/proc/net/snmp`, `/proc/net/netstat`,
   `/proc/net/snmp6`, `/proc/net/sockstat`, and `/proc/net/sockstat6`, plus an
-  on-demand bounded `NETLINK_SOCK_DIAG` TCP/UDP table and `/proc/<pid>/fd`
+  on-demand bounded socket-family diagnostics and `/proc/<pid>/fd`
   process-owner mapping.
 - IPv4/IPv6 and ICMP counters from procfs plus native `NETLINK_ROUTE`
   route, policy-rule, and ARP/NDISC neighbour dumps and explicit route lookup.

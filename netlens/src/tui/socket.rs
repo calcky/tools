@@ -1,5 +1,3 @@
-use std::net::IpAddr;
-
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -8,7 +6,7 @@ use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::monitor::socket_table::{
-    InetSocketSnapshot, SocketEndpoint, SocketProcessCoverage, SocketRowKey, SocketTableSnapshot,
+    InetSocketSnapshot, SocketEndpoint, SocketRowKey, SocketTableSnapshot,
 };
 use crate::monitor::ProviderHealth;
 
@@ -138,7 +136,7 @@ fn socket_table_viewport(
                 } else if !matches!(snapshot.health(), ProviderHealth::Fresh) {
                     " No matches in retained sockets; collection incomplete or unavailable"
                 } else if snapshot.sockets().is_empty() {
-                    " No INET TCP/UDP sockets were retained"
+                    " No sockets were retained"
                 } else {
                     " No sockets match the active filter"
                 },
@@ -158,10 +156,13 @@ fn socket_table_viewport(
                 let socket = &snapshot.sockets()[index];
                 socket_line(
                     socket,
-                    snapshot.process_coverage(),
+                    order.peer(index),
                     width,
                     order,
-                    selected.is_some_and(|key| key == socket.row_key()),
+                    selected.is_some_and(|key| {
+                        key == socket.row_key()
+                            || order.peer(index).is_some_and(|peer| key == peer.row_key())
+                    }),
                 )
             }),
     );
@@ -176,7 +177,7 @@ fn table_header_lines(
     let (health, health_style) = health_label(snapshot.health());
     let mut lines = vec![Line::from(vec![
         Span::styled(
-            " INET SOCKETS ",
+            " SOCKETS ",
             Style::default()
                 .fg(theme::TEXT_STRONG)
                 .add_modifier(Modifier::BOLD),
@@ -196,7 +197,7 @@ fn table_header_lines(
     }
     let segments = [
         format!(
-            "shown {shown}/{} retained; {} observed",
+            "shown {shown} rows / {} sockets; {} observed",
             snapshot.sockets().len(),
             snapshot.observed_sockets()
         ),
@@ -206,13 +207,27 @@ fn table_header_lines(
             snapshot.completed_queries() + snapshot.failed_queries()
         ),
         format!("process-map {}", snapshot.process_map_summary()),
-        "Q: bytes; LISTEN: pending/max connections".to_owned(),
+        "local pairs merged; metrics = LOCAL; Q: bytes unless tagged pkts/mem; LISTEN: pending/max"
+            .to_owned(),
     ];
     lines.extend(
         wrap_segments(&segments, width, 1)
             .into_iter()
             .map(|line| Line::styled(line, Style::default().fg(theme::TEXT))),
     );
+    if !snapshot.unsupported().is_empty() {
+        lines.extend(
+            wrap_text(
+                &format!(
+                    " unavailable in kernel: {}",
+                    snapshot.unsupported().join(", ")
+                ),
+                width,
+            )
+            .into_iter()
+            .map(|line| Line::styled(line, Style::default().fg(theme::MUTED))),
+        );
+    }
     if let Some(diagnostic) = health_diagnostic(snapshot.health()) {
         lines.extend(
             wrap_text(&format!(" reason {diagnostic}"), width)
@@ -261,7 +276,7 @@ struct SocketLayout {
 impl SocketLayout {
     fn new(width: usize) -> Self {
         const MIN: [usize; 10] = [6, 6, 6, 7, 8, 9, 9, 9, 6, 5];
-        const PREFERRED: [usize; 10] = [6, 11, 22, 22, 18, 9, 9, 10, 8, 7];
+        const PREFERRED: [usize; 10] = [7, 11, 22, 22, 18, 9, 9, 10, 8, 7];
         let available = width.saturating_sub(9);
         let minimum = MIN.iter().sum::<usize>();
         let extra = available.saturating_sub(minimum);
@@ -293,6 +308,9 @@ impl SocketLayout {
             widths[index] -= excess;
             widths[4] += excess;
         }
+        let protocol_width = if width >= 100 { 7 } else { 6 };
+        widths[4] = widths[4] + widths[0] - protocol_width;
+        widths[0] = protocol_width;
         Self { widths, width }
     }
 
@@ -330,7 +348,20 @@ impl SocketLayout {
             ));
         }
         let labels = [
-            "PROTO", "STATE", "LOCAL", "REMOTE", "PROCESS", "RECV-Q", "SEND-Q", "RTT", "MSS", "CC",
+            "PROTO",
+            "STATE",
+            "LOCAL",
+            "REMOTE",
+            if self.widths[4] >= 24 {
+                "PROCESS (LOCAL ↔ PEER)"
+            } else {
+                "PROCESS"
+            },
+            "RECV-Q",
+            "SEND-Q",
+            "RTT",
+            "MSS",
+            "CC",
         ];
         let mut bottom = Vec::new();
         for (index, label) in labels.into_iter().enumerate() {
@@ -457,20 +488,29 @@ fn socket_heading_lines(width: usize, order: &SocketOrder) -> Vec<Line<'static>>
 
 fn socket_line(
     socket: &InetSocketSnapshot,
-    process_coverage: SocketProcessCoverage,
+    peer: Option<&InetSocketSnapshot>,
     width: usize,
     order: &SocketOrder,
     selected: bool,
 ) -> Line<'static> {
     let layout = SocketLayout::new(width);
     let values = [
-        socket.protocol().label().to_ascii_uppercase(),
+        socket.protocol_label().to_ascii_uppercase(),
         compact_state(socket.state()).to_owned(),
         truncate_middle(&format_endpoint(socket.local()), layout.widths[2]),
-        truncate_middle(&format_endpoint(socket.remote()), layout.widths[3]),
-        format_owner(socket, process_coverage, layout.widths[4]),
-        format_queue(socket, socket.receive_queue()),
-        format_queue(socket, socket.send_queue()),
+        truncate_middle(
+            &format_endpoint(
+                if socket.protocol() == crate::monitor::socket_table::SocketProtocol::Unix {
+                    peer.map_or(socket.remote(), |peer| peer.local())
+                } else {
+                    socket.remote()
+                },
+            ),
+            layout.widths[3],
+        ),
+        format_processes(socket, peer, layout.widths[4]),
+        format_queue(socket, socket.receive_queue(), false),
+        format_queue(socket, socket.send_queue(), true),
         socket
             .tcp()
             .map_or_else(|| "n/a".to_owned(), |tcp| format_rtt(tcp.rtt_micros)),
@@ -483,23 +523,39 @@ fn socket_line(
     layout.row(values, order.sort(), selected)
 }
 
-fn format_owner(
+fn format_processes(
     socket: &InetSocketSnapshot,
-    process_coverage: SocketProcessCoverage,
+    peer: Option<&InetSocketSnapshot>,
     width: usize,
 ) -> String {
+    let Some(peer) = peer else {
+        return format_owner(socket, width);
+    };
+    let local = format_owner(socket, usize::MAX);
+    let remote = format_owner(peer, usize::MAX);
+    let separator = if width >= 13 { " ↔ " } else { "↔" };
+    let available = width.saturating_sub(text_width(separator));
+    let mut local_width = available.div_ceil(2);
+    let mut peer_width = available / 2;
+    if text_width(&local) < local_width {
+        local_width = text_width(&local);
+        peer_width = available - local_width;
+    } else if text_width(&remote) < peer_width {
+        peer_width = text_width(&remote);
+        local_width = available - peer_width;
+    }
+    // Shorten each endpoint independently so a long local name cannot hide its peer.
+    format!(
+        "{}{}{}",
+        format_owner(socket, local_width),
+        separator,
+        format_owner(peer, peer_width)
+    )
+}
+
+fn format_owner(socket: &InetSocketSnapshot, width: usize) -> String {
     let Some(owner) = socket.owners().first() else {
-        if !socket.owner_lookup_applicable() {
-            return "-".to_owned();
-        }
-        if !socket.row_key().is_stable() {
-            return "owner?".to_owned();
-        }
-        return if process_coverage.is_complete() {
-            format!("u{}", socket.uid())
-        } else {
-            "owner?".to_owned()
-        };
+        return truncate_middle(socket.owner_status(), width);
     };
     let additional = socket.owners().len().saturating_sub(1);
     let suffix = if additional > 0 {
@@ -526,10 +582,7 @@ fn compact_state(state: &str) -> &str {
 }
 
 pub(super) fn format_endpoint(endpoint: &SocketEndpoint) -> String {
-    match endpoint.address() {
-        IpAddr::V4(address) => format!("{address}:{}", endpoint.port()),
-        IpAddr::V6(address) => format!("[{address}]:{}", endpoint.port()),
-    }
+    endpoint.to_string()
 }
 
 fn format_bytes_value(value: u64) -> String {
@@ -547,11 +600,19 @@ fn format_bytes_value(value: u64) -> String {
     }
 }
 
-fn format_queue(socket: &InetSocketSnapshot, value: u32) -> String {
-    if socket.is_tcp_listener() {
-        value.to_string()
-    } else {
-        format_bytes_value(u64::from(value))
+pub(super) fn format_queue(socket: &InetSocketSnapshot, value: u32, send: bool) -> String {
+    use crate::monitor::socket_table::QueueKind;
+    match socket.queue_kind() {
+        QueueKind::Backlog => value.to_string(),
+        QueueKind::Bytes => format_bytes_value(u64::from(value)),
+        QueueKind::UnixStream | QueueKind::UnixDatagram if send => {
+            format!("{} mem", format_bytes_value(u64::from(value)))
+        }
+        QueueKind::UnixStream => format_bytes_value(u64::from(value)),
+        QueueKind::UnixDatagram => format!("{} next", format_bytes_value(u64::from(value))),
+        QueueKind::DatagramCount => format!("{value} pkts"),
+        QueueKind::Memory => format!("{} mem", format_bytes_value(u64::from(value))),
+        QueueKind::Unavailable => "n/a".to_owned(),
     }
 }
 
@@ -804,7 +865,7 @@ mod tests {
                 .unwrap()
                 .trim()
                 .trim_start_matches('"'),
-            "TCP"
+            "TCP4"
         );
         assert_eq!(
             udp.split('|')
@@ -812,7 +873,7 @@ mod tests {
                 .unwrap()
                 .trim()
                 .trim_start_matches('"'),
-            "UDP"
+            "UDP6"
         );
         for expected in [
             "1234/client-worker",
@@ -860,7 +921,7 @@ mod tests {
     fn wide_address_columns_stay_compact_without_changing_row_hit_geometry() {
         for width in [120, 160, 240, 500] {
             let layout = SocketLayout::new(width);
-            assert_eq!(layout.widths[0], 6);
+            assert_eq!(layout.widths[0], 7);
             assert!(layout.widths[2] <= 22 && layout.widths[3] <= 22);
             assert_eq!(layout.widths.iter().sum::<usize>() + 9, width);
             let mut start = 0;
@@ -874,21 +935,49 @@ mod tests {
     }
 
     #[test]
+    fn local_connection_rows_show_both_processes_even_when_peer_is_filtered_out() {
+        let snapshot = Arc::new(crate::monitor::socket_table::synthetic_local_socket_pair());
+        let filter = crate::monitor::socket_table::SocketFilter::parse("src port 42000")
+            .unwrap()
+            .unwrap();
+        let mut order = SocketOrder::default();
+        for filter in [None, Some(&filter)] {
+            order.update(Arc::clone(&snapshot), filter);
+            let rendered = socket_table_lines(&snapshot, &order, None, 180)
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let rows = socket_rows(&rendered);
+            assert_eq!(rows.len(), 1, "local connection must be merged");
+            for row in rows {
+                let fields: Vec<_> = row.split('|').map(str::trim).collect();
+                let expected = if fields[2].ends_with(":42000") {
+                    "1234/client-worker ↔ 5678/server-worker"
+                } else {
+                    "5678/server-worker ↔ 1234/client-worker"
+                };
+                assert_eq!(fields[4], expected, "{row}");
+            }
+            for width in [60, 80, 120, 160, 180, 240] {
+                assert!(socket_table_lines(&snapshot, &order, None, width)
+                    .iter()
+                    .all(|line| line.width() <= usize::from(width)));
+            }
+        }
+    }
+
+    #[test]
     fn listener_queues_are_connection_counts() {
         let snapshot = crate::monitor::socket_table::synthetic_socket_table_listener_snapshot_at(2);
-        let row = socket_line(
-            &snapshot.sockets()[0],
-            snapshot.process_coverage(),
-            160,
-            &order(&snapshot),
-            false,
-        )
-        .to_string();
+        let row =
+            socket_line(&snapshot.sockets()[0], None, 160, &order(&snapshot), false).to_string();
         let fields: Vec<_> = row.split('|').map(str::trim).collect();
-        assert_eq!(fields[0], "TCP");
+        assert_eq!(fields[0], "TCP4");
         assert_eq!(fields[5], "11");
         assert_eq!(fields[6], "128");
         assert_eq!(fields[7], "n/a");
+        assert!(!fields[4].contains('↔'));
     }
 
     #[test]

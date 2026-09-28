@@ -125,7 +125,7 @@ impl Expression {
                 let matches = |endpoint: Endpoint| match value {
                     Value::Network(network) => network.contains(&endpoint.0),
                     Value::Ports(low, high) => {
-                        matches!(protocol, 6 | 17 | 132)
+                        matches!(protocol, 6 | 17 | 33 | 132)
                             && endpoint.1.is_some_and(|p| (*low..=*high).contains(&p))
                     }
                 };
@@ -315,9 +315,9 @@ impl<'a> Parser<'a> {
             _ => (),
         }
         if matches!(q.kind, Kind::Port | Kind::PortRange)
-            && q.protocol.is_some_and(|p| !matches!(p, 6 | 17 | 132))
+            && q.protocol.is_some_and(|p| !matches!(p, 6 | 17 | 33 | 132))
         {
-            return Err("port and portrange qualifiers require tcp, udp or sctp");
+            return Err("port and portrange qualifiers require tcp, udp, dccp or sctp");
         }
         // A qualified parenthesized list inherits all qualifiers, including protocol.
         if self.peek() == Some("(") {
@@ -381,7 +381,7 @@ impl<'a> Parser<'a> {
 fn named_protocol(token: &str) -> bool {
     matches!(
         token.to_ascii_lowercase().as_str(),
-        "tcp" | "udp" | "icmp" | "icmp6" | "icmpv6" | "ipv6-icmp" | "sctp" | "gre"
+        "tcp" | "udp" | "icmp" | "icmp6" | "icmpv6" | "ipv6-icmp" | "sctp" | "dccp" | "raw" | "gre"
     )
 }
 

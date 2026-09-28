@@ -98,12 +98,11 @@ impl ConnectionFilter {
     pub(crate) fn parse_socket(query: &str) -> Result<Option<Self>, &'static str> {
         let parsed = Self::parse(query)?;
         if parsed.as_ref().is_some_and(|filter| {
-            filter
-                .terms
-                .iter()
-                .any(|term| matches!(term, Term::Protocol(p) if !matches!(p, 6 | 17)))
+            filter.terms.iter().any(
+                |term| matches!(term, Term::Protocol(p) if !matches!(p, 6 | 17 | 33 | 132 | 255)),
+            )
         }) {
-            return Err("socket protocol must be tcp, udp, 6 or 17");
+            return Err("socket protocol must be tcp, udp, dccp, sctp or raw (6/17/33/132/255)");
         }
         Ok(parsed)
     }
@@ -193,6 +192,8 @@ fn protocol(value: &str) -> Result<u8, &'static str> {
         "icmp" => Ok(1),
         "icmp6" | "icmpv6" | "ipv6-icmp" => Ok(58),
         "sctp" => Ok(132),
+        "dccp" => Ok(33),
+        "raw" => Ok(255),
         "gre" => Ok(47),
         _ => value
             .parse()

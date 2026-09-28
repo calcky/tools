@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 const MAX_PROCESSES: usize = 65_536;
 const MAX_SCANNED_FDS: usize = 262_144;
@@ -43,12 +44,30 @@ pub(crate) enum ProcessScanStatus {
 
 pub(crate) struct SocketProcessScan {
     owners: BTreeMap<u32, Vec<SocketProcess>>,
+    socket_pids: BTreeSet<u32>,
+    visited_processes: usize,
     status: ProcessScanStatus,
     scanned_processes: usize,
     scanned_fds: usize,
 }
 
 impl SocketProcessScan {
+    pub(crate) fn socket_pids(&self) -> &BTreeSet<u32> {
+        &self.socket_pids
+    }
+
+    pub(crate) const fn visited_processes(&self) -> usize {
+        self.visited_processes
+    }
+
+    pub(crate) fn owner_pids(&self) -> BTreeSet<u32> {
+        self.owners
+            .values()
+            .flatten()
+            .map(|owner| owner.pid)
+            .collect()
+    }
+
     pub(crate) fn owners(&self, inode: u32) -> &[SocketProcess] {
         self.owners.get(&inode).map_or(&[], Vec::as_slice)
     }
@@ -69,6 +88,8 @@ impl SocketProcessScan {
     pub(crate) fn empty() -> Self {
         Self {
             owners: BTreeMap::new(),
+            socket_pids: BTreeSet::new(),
+            visited_processes: 0,
             status: ProcessScanStatus::Complete,
             scanned_processes: 0,
             scanned_fds: 0,
@@ -126,6 +147,26 @@ pub(crate) fn scan_socket_processes_until(
     )
 }
 
+pub(crate) fn scan_known_socket_processes(
+    proc_root: &Path,
+    target_inodes: &BTreeSet<u32>,
+    pids: &[u32],
+    cancelled: &AtomicBool,
+) -> Option<SocketProcessScan> {
+    scan_pids_until(
+        proc_root,
+        target_inodes,
+        &pids[..pids.len().min(64)],
+        ScanLimits {
+            processes: 64,
+            fds: 4096,
+            owners_per_socket: MAX_OWNERS_PER_SOCKET,
+        },
+        Some(cancelled),
+        Some(Instant::now() + Duration::from_millis(10)),
+    )
+}
+
 #[cfg(test)]
 fn scan_with_limits(
     proc_root: &Path,
@@ -148,6 +189,8 @@ fn scan_with_limits_until(
     if target_inodes.is_empty() {
         return Some(SocketProcessScan {
             owners: BTreeMap::new(),
+            socket_pids: BTreeSet::new(),
+            visited_processes: 0,
             status: ProcessScanStatus::Complete,
             scanned_processes: 0,
             scanned_fds: 0,
@@ -164,6 +207,8 @@ fn scan_with_limits_until(
             };
             return Some(SocketProcessScan {
                 owners: BTreeMap::new(),
+                socket_pids: BTreeSet::new(),
+                visited_processes: 0,
                 status: ProcessScanStatus::Unavailable(unavailable),
                 scanned_processes: 0,
                 scanned_fds: 0,
@@ -197,7 +242,39 @@ fn scan_with_limits_until(
     pids.sort_unstable();
     pids.dedup();
 
+    let mut scan = scan_pids_until(proc_root, target_inodes, &pids, limits, cancelled, None)?;
+    if processes_truncated {
+        scan.status = match scan.status {
+            ProcessScanStatus::Partial {
+                permission_denied_processes,
+                io_errors,
+                ..
+            } => ProcessScanStatus::Partial {
+                permission_denied_processes,
+                io_errors,
+                truncated: true,
+            },
+            _ => ProcessScanStatus::Partial {
+                permission_denied_processes: 0,
+                io_errors: 0,
+                truncated: true,
+            },
+        };
+    }
+    Some(scan)
+}
+
+fn scan_pids_until(
+    proc_root: &Path,
+    target_inodes: &BTreeSet<u32>,
+    pids: &[u32],
+    limits: ScanLimits,
+    cancelled: Option<&AtomicBool>,
+    deadline: Option<Instant>,
+) -> Option<SocketProcessScan> {
     let mut owners = BTreeMap::<u32, Vec<SocketProcess>>::new();
+    let mut socket_pids = BTreeSet::new();
+    let mut visited_processes = 0;
     let mut permission_denied_processes = 0_usize;
     let mut io_errors = 0_usize;
     let mut scanned_processes = 0_usize;
@@ -206,12 +283,16 @@ fn scan_with_limits_until(
     let mut owners_truncated = false;
 
     for pid in pids {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            fds_truncated = true;
+        }
         if fds_truncated {
             break;
         }
         if is_cancelled(cancelled) {
             return None;
         }
+        visited_processes += 1;
         let process_root = proc_root.join(pid.to_string());
         let entries = match fs::read_dir(process_root.join("fd")) {
             Ok(entries) => entries,
@@ -239,11 +320,14 @@ fn scan_with_limits_until(
             }
         };
         let mut process_inodes = BTreeMap::new();
+        let mut has_socket = false;
         for entry in entries {
             if is_cancelled(cancelled) {
                 return None;
             }
-            if scanned_fds >= limits.fds {
+            if scanned_fds >= limits.fds
+                || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            {
                 fds_truncated = true;
                 break;
             }
@@ -267,6 +351,7 @@ fn scan_with_limits_until(
             let Some(inode) = target.to_str().and_then(parse_socket_inode) else {
                 continue;
             };
+            has_socket = true;
             if !target_inodes.contains(&inode) {
                 continue;
             }
@@ -279,14 +364,20 @@ fn scan_with_limits_until(
             };
             process_inodes.entry(inode).or_insert(fd);
         }
-        if process_inodes.is_empty() {
+        if !has_socket {
             continue;
         }
-        let command = read_command(&process_root.join("comm"));
         if read_start_time(&process_root.join("stat")).ok() != Some(start_time) {
             io_errors = io_errors.saturating_add(1);
             continue;
         }
+        // A short-lived socket may have replaced the requested inode already.
+        // Keep its process as a scan candidate, never as inferred ownership.
+        socket_pids.insert(*pid);
+        if process_inodes.is_empty() {
+            continue;
+        }
+        let command = read_command(&process_root.join("comm"));
         for (inode, fd) in process_inodes {
             let socket_owners = owners.entry(inode).or_default();
             if socket_owners.len() >= limits.owners_per_socket {
@@ -294,7 +385,7 @@ fn scan_with_limits_until(
                 continue;
             }
             socket_owners.push(SocketProcess {
-                pid,
+                pid: *pid,
                 command: command.clone(),
                 start_time,
                 fd,
@@ -302,7 +393,7 @@ fn scan_with_limits_until(
         }
     }
 
-    let truncated = processes_truncated || fds_truncated || owners_truncated;
+    let truncated = fds_truncated || owners_truncated;
     let status = if permission_denied_processes == 0 && io_errors == 0 && !truncated {
         ProcessScanStatus::Complete
     } else {
@@ -314,6 +405,8 @@ fn scan_with_limits_until(
     };
     Some(SocketProcessScan {
         owners,
+        socket_pids,
+        visited_processes,
         status,
         scanned_processes,
         scanned_fds,
@@ -405,6 +498,38 @@ mod tests {
         for (fd, target) in links {
             symlink(target, fds.join(fd)).unwrap();
         }
+    }
+
+    #[test]
+    fn fast_scan_obeys_deadline_and_only_searches_known_processes() {
+        let root = TempDir::new().unwrap();
+        add_process(root.path(), 20, "known", &[("3", "socket:[42]")]);
+        add_process(root.path(), 30, "other", &[("3", "socket:[99]")]);
+        let targets = BTreeSet::from([42, 99]);
+        let cancelled = AtomicBool::new(false);
+        let scan = scan_known_socket_processes(root.path(), &targets, &[20], &cancelled).unwrap();
+        assert_eq!(scan.owners(42)[0].pid, 20);
+        assert!(scan.owners(99).is_empty());
+        let expired = scan_pids_until(
+            root.path(),
+            &targets,
+            &[20],
+            ScanLimits::default(),
+            None,
+            Some(Instant::now()),
+        )
+        .unwrap();
+        assert!(expired.owners(42).is_empty());
+        assert_eq!(expired.scanned_fds(), 0);
+        assert!(matches!(
+            expired.status(),
+            ProcessScanStatus::Partial {
+                truncated: true,
+                ..
+            }
+        ));
+        cancelled.store(true, Ordering::Release);
+        assert!(scan_known_socket_processes(root.path(), &targets, &[20], &cancelled).is_none());
     }
 
     #[test]

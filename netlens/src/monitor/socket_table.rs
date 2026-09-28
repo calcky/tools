@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -10,15 +9,19 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 
 use crate::collect::sock_diag::{
-    self, CollectErrorKind, RawSocket, SocketFamily as RawFamily, SocketIdentity,
-    SocketProtocol as RawProtocol, SocketTableCollection,
+    self, CollectErrorKind, RawSocket, SocketIdentity, SocketProtocol as RawProtocol,
+    SocketTableCollection,
 };
 use crate::collect::socket_process::{self, ProcessScanStatus, ProcessScanUnavailable};
 use crate::collect::SystemPaths;
+#[cfg(test)]
+use sock_diag::SocketFamily as RawFamily;
 
 use super::{CounterSpan, MonitorError, MonitorErrorCode, ProviderHealth};
 
+#[cfg(test)]
 const QUERY_COUNT: usize = 4;
+pub(crate) use sock_diag::{QueueKind, SocketEndpoint, SocketFamily, SocketProtocol};
 const MAX_RETAINED_PER_QUERY: usize = 4_096;
 const MAX_DISPLAYED_SOCKETS: usize = 4_096;
 
@@ -27,47 +30,119 @@ use owners::{OwnerService, OwnerSnapshot};
 mod limits;
 pub(crate) use limits::SocketLimitInterval;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum SocketFamily {
-    Ipv4,
-    Ipv6,
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) enum SocketFilter {
+    Inet(super::connection_filter::ConnectionFilter),
+    Type {
+        query: String,
+        protocol: SocketProtocol,
+        socket_type: Option<u8>,
+    },
+    Path {
+        query: String,
+        value: String,
+    },
+    Process {
+        query: String,
+        value: String,
+    },
 }
 
-impl SocketFamily {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Ipv4 => "4",
-            Self::Ipv6 => "6",
-        }
+impl fmt::Debug for SocketFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SocketFilter(<redacted>)")
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum SocketProtocol {
-    Tcp,
-    Udp,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SocketFilter(super::connection_filter::ConnectionFilter);
 
 impl SocketFilter {
     pub(crate) fn parse(query: &str) -> Result<Option<Self>, &'static str> {
+        if query.len() > 512 {
+            return Err("filter must be at most 512 bytes");
+        }
+        let text = query.trim();
+        if let Some(value) = text
+            .strip_prefix("proc")
+            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err("proc requires a process name (e.g. proc cc-switch)");
+            }
+            return Ok(Some(Self::Process {
+                query: text.to_owned(),
+                value: value.to_lowercase(),
+            }));
+        }
+        let type_name = text.strip_prefix("type=").unwrap_or(text);
+        let selected = match type_name {
+            "unix" => Some((SocketProtocol::Unix, None)),
+            "unix_stream" => Some((SocketProtocol::Unix, Some(1))),
+            "unix_dgram" => Some((SocketProtocol::Unix, Some(2))),
+            "unix_seqpacket" => Some((SocketProtocol::Unix, Some(5))),
+            "packet" => Some((SocketProtocol::Packet, None)),
+            "packet_raw" => Some((SocketProtocol::Packet, Some(3))),
+            "packet_dgram" => Some((SocketProtocol::Packet, Some(2))),
+            "netlink" => Some((SocketProtocol::Netlink, None)),
+            "vsock" => Some((SocketProtocol::Vsock, None)),
+            "vsock_stream" => Some((SocketProtocol::Vsock, Some(1))),
+            "vsock_dgram" => Some((SocketProtocol::Vsock, Some(2))),
+            "tipc" => Some((SocketProtocol::Tipc, None)),
+            "xdp" => Some((SocketProtocol::Xdp, None)),
+            "raw" => Some((SocketProtocol::Raw, None)),
+            "dccp" => Some((SocketProtocol::Dccp, None)),
+            "sctp" => Some((SocketProtocol::Sctp, None)),
+            "mptcp" => Some((SocketProtocol::Mptcp, None)),
+            "tcp" => Some((SocketProtocol::Tcp, None)),
+            "udp" => Some((SocketProtocol::Udp, None)),
+            _ => None,
+        };
+        if let Some((protocol, socket_type)) = selected {
+            return Ok(Some(Self::Type {
+                query: text.to_owned(),
+                protocol,
+                socket_type,
+            }));
+        }
+        if let Some(value) = text.strip_prefix("path=") {
+            if value.is_empty() {
+                return Err("path= requires a UNIX path or abstract name");
+            }
+            return Ok(Some(Self::Path {
+                query: text.to_owned(),
+                value: value.to_owned(),
+            }));
+        }
         super::connection_filter::ConnectionFilter::parse_socket(query)
-            .map(|filter| filter.map(Self))
+            .map(|filter| filter.map(Self::Inet))
     }
 
     pub(crate) fn query(&self) -> &str {
-        self.0.query()
+        match self {
+            Self::Inet(filter) => filter.query(),
+            Self::Type { query, .. } | Self::Path { query, .. } | Self::Process { query, .. } => {
+                query
+            }
+        }
     }
 
     pub(crate) fn matches(&self, socket: &InetSocketSnapshot) -> bool {
-        let local = (socket.local().address(), Some(socket.local().port()));
-        let remote = (socket.remote().address(), Some(socket.remote().port()));
-        self.0.matches(
-            match socket.protocol() {
-                SocketProtocol::Tcp => 6,
-                SocketProtocol::Udp => 17,
+        let filter = match self {
+            Self::Inet(filter) => filter,
+            Self::Type { protocol, socket_type, .. } => return socket.protocol == *protocol && socket_type.is_none_or(|kind| kind == socket.details.socket_type),
+            Self::Path { value, .. } => return [&socket.local, &socket.remote].iter().any(|ep| matches!(ep, SocketEndpoint::Unix { name: Some(name), .. } if name.contains(value))),
+            Self::Process { value, .. } => return socket.owners().iter().any(|owner| owner.command().is_some_and(|name| name.to_lowercase().contains(value))),
+        };
+        let (Some(local), Some(remote)) = (
+            socket.local.filter_endpoint(),
+            socket.remote.filter_endpoint(),
+        ) else {
+            return false;
+        };
+        filter.matches(
+            if socket.protocol == SocketProtocol::Mptcp {
+                6
+            } else {
+                socket.protocol().number() as u8
             },
             local,
             remote,
@@ -79,6 +154,7 @@ impl SocketFilter {
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 enum SocketRowIdentity {
     Stable(SocketIdentity),
+    Association(SocketIdentity, SocketEndpoint, SocketEndpoint, bool),
     Ephemeral { sequence: u64, ordinal: usize },
 }
 
@@ -95,44 +171,16 @@ impl SocketRowKey {
     }
 
     pub(crate) const fn is_stable(&self) -> bool {
-        matches!(self.0, SocketRowIdentity::Stable(_))
+        matches!(
+            self.0,
+            SocketRowIdentity::Stable(_) | SocketRowIdentity::Association(..)
+        )
     }
 }
 
 impl fmt::Debug for SocketRowKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("SocketRowKey(<redacted>)")
-    }
-}
-
-impl SocketProtocol {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Tcp => "tcp",
-            Self::Udp => "udp",
-        }
-    }
-}
-
-#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SocketEndpoint {
-    address: IpAddr,
-    port: u16,
-}
-
-impl SocketEndpoint {
-    pub(crate) const fn address(&self) -> IpAddr {
-        self.address
-    }
-
-    pub(crate) const fn port(&self) -> u16 {
-        self.port
-    }
-}
-
-impl fmt::Debug for SocketEndpoint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SocketEndpoint(<redacted>)")
     }
 }
 
@@ -180,10 +228,6 @@ impl SocketProcessCoverage {
             Self::PermissionDenied => "permission-denied",
             Self::Unavailable => "unavailable",
         }
-    }
-
-    pub(crate) const fn is_complete(self) -> bool {
-        matches!(self, Self::Complete)
     }
 
     pub(crate) fn summary(self) -> String {
@@ -313,6 +357,7 @@ impl SocketTcpDiagnostics {
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct InetSocketSnapshot {
+    details: sock_diag::SocketDetails,
     row_key: SocketRowKey,
     family: SocketFamily,
     protocol: SocketProtocol,
@@ -325,6 +370,7 @@ pub(crate) struct InetSocketSnapshot {
     send_queue: u32,
     uid: u32,
     owners: Arc<[SocketOwner]>,
+    owner_coverage: SocketProcessCoverage,
     congestion_algorithm: Option<String>,
     memory: Option<SocketMemoryDiagnostics>,
     tcp: Option<SocketTcpDiagnostics>,
@@ -337,12 +383,33 @@ pub(crate) struct InetSocketSnapshot {
 }
 
 impl InetSocketSnapshot {
-    pub(crate) const fn row_key(&self) -> &SocketRowKey {
-        &self.row_key
+    pub(crate) fn details(&self) -> &sock_diag::SocketDetails {
+        &self.details
     }
 
-    pub(crate) const fn family(&self) -> SocketFamily {
-        self.family
+    pub(crate) fn protocol_label(&self) -> String {
+        let subtype = match (self.protocol, self.details.socket_type) {
+            (SocketProtocol::Unix, 1) => "u_str",
+            (SocketProtocol::Unix, 2) => "u_dgr",
+            (SocketProtocol::Unix, 5) => "u_seq",
+            (SocketProtocol::Packet, 3) => "p_raw",
+            (SocketProtocol::Packet, 2) => "p_dgr",
+            (SocketProtocol::Vsock, 1) => "v_str",
+            (SocketProtocol::Vsock, 2) => "v_dgr",
+            _ => self.protocol.label(),
+        };
+        format!("{subtype}{}", self.family.label())
+    }
+
+    pub(crate) fn queue_kind(&self) -> QueueKind {
+        if self.is_tcp_listener() {
+            QueueKind::Backlog
+        } else {
+            self.details.queue_kind
+        }
+    }
+    pub(crate) const fn row_key(&self) -> &SocketRowKey {
+        &self.row_key
     }
 
     pub(crate) const fn protocol(&self) -> SocketProtocol {
@@ -387,6 +454,27 @@ impl InetSocketSnapshot {
 
     pub(crate) fn owners(&self) -> &[SocketOwner] {
         &self.owners
+    }
+
+    pub(crate) fn owner_status(&self) -> &'static str {
+        if !self.owner_lookup_applicable() {
+            return "-";
+        }
+        if !self.row_key.is_stable() {
+            return "unavailable";
+        }
+        match self.owner_coverage {
+            SocketProcessCoverage::Pending => "resolving",
+            SocketProcessCoverage::Complete => "unmatched",
+            SocketProcessCoverage::PermissionDenied => "denied",
+            // A denied scan of another PID does not prove this socket was denied.
+            SocketProcessCoverage::Partial {
+                permission_denied_processes,
+                ..
+            } if permission_denied_processes > 0 => "restricted",
+            SocketProcessCoverage::Partial { .. } => "partial",
+            SocketProcessCoverage::Unavailable => "unavailable",
+        }
     }
 
     pub(crate) const fn memory(&self) -> Option<SocketMemoryDiagnostics> {
@@ -450,6 +538,7 @@ impl fmt::Debug for InetSocketSnapshot {
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct SocketTableSnapshot {
+    unsupported: Vec<String>,
     sequence: u64,
     attempted_at: Duration,
     collection_duration: Duration,
@@ -467,6 +556,9 @@ pub(crate) struct SocketTableSnapshot {
 }
 
 impl SocketTableSnapshot {
+    pub(crate) fn unsupported(&self) -> &[String] {
+        &self.unsupported
+    }
     pub(crate) const fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -500,10 +592,6 @@ impl SocketTableSnapshot {
         self.truncated
     }
 
-    pub(crate) const fn process_coverage(&self) -> SocketProcessCoverage {
-        self.process_coverage
-    }
-
     pub(crate) fn process_map_summary(&self) -> String {
         process_map_summary(
             self.process_coverage,
@@ -528,6 +616,88 @@ impl SocketTableSnapshot {
 
     pub(crate) fn socket(&self, key: &SocketRowKey) -> Option<&InetSocketSnapshot> {
         self.sockets.iter().find(|socket| socket.row_key() == key)
+    }
+
+    pub(crate) fn local_peer(&self, socket: &InetSocketSnapshot) -> Option<&InetSocketSnapshot> {
+        let index = self
+            .sockets
+            .iter()
+            .position(|row| row.row_key == socket.row_key)?;
+        self.local_peer_indices()[index].map(|peer| &self.sockets[peer])
+    }
+
+    pub(crate) fn local_peer_indices(&self) -> Vec<Option<usize>> {
+        let endpoint = SocketEndpoint::canonical;
+        let eligible = |socket: &InetSocketSnapshot| {
+            socket.protocol == SocketProtocol::Tcp
+                && !socket.is_tcp_listener()
+                && socket.row_key.is_stable()
+                && socket.remote.inet().is_some_and(|(_, port)| port != 0)
+        };
+        let mut endpoints = BTreeMap::new();
+        for (index, socket) in self
+            .sockets
+            .iter()
+            .enumerate()
+            .filter(|(_, socket)| eligible(socket))
+        {
+            endpoints
+                .entry((endpoint(&socket.local), endpoint(&socket.remote)))
+                .or_insert_with(Vec::new)
+                .push(index);
+        }
+        let mut peers = vec![None; self.sockets.len()];
+        for (index, socket) in self
+            .sockets
+            .iter()
+            .enumerate()
+            .filter(|(_, socket)| eligible(socket))
+        {
+            let Some(candidates) =
+                endpoints.get(&(endpoint(&socket.remote), endpoint(&socket.local)))
+            else {
+                continue;
+            };
+            let mut candidates = candidates.iter().copied().filter(|&peer| {
+                let peer = &self.sockets[peer];
+                peer.row_key != socket.row_key
+                    && (peer.bound_ifindex == 0
+                        || socket.bound_ifindex == 0
+                        || peer.bound_ifindex == socket.bound_ifindex)
+            });
+            if let Some(peer) = candidates.next() {
+                if candidates.next().is_none() {
+                    peers[index] = Some(peer);
+                }
+            }
+        }
+        let mut unix_inodes = BTreeMap::new();
+        for (index, socket) in self.sockets.iter().enumerate() {
+            if socket.protocol == SocketProtocol::Unix && socket.row_key.is_stable() {
+                unix_inodes
+                    .entry(socket.sort_inode)
+                    .or_insert_with(Vec::new)
+                    .push(index);
+            }
+        }
+        for (index, socket) in self.sockets.iter().enumerate() {
+            if socket.protocol != SocketProtocol::Unix || !socket.row_key.is_stable() {
+                continue;
+            }
+            if let SocketEndpoint::Unix { inode, .. } = socket.remote {
+                if let Some(candidates) = unix_inodes.get(&inode) {
+                    if candidates.len() == 1 && candidates[0] != index {
+                        peers[index] = Some(candidates[0]);
+                    }
+                }
+            }
+        }
+        // Only merge mutually unique matches, including when device bindings differ.
+        peers
+            .iter()
+            .enumerate()
+            .map(|(index, peer)| peer.filter(|&peer| peers[peer] == Some(index)))
+            .collect()
     }
 }
 
@@ -555,6 +725,7 @@ pub(crate) struct SocketDetailState {
     last_sequence: u64,
     observed_latest: bool,
     last_observed: InetSocketSnapshot,
+    peer: Option<InetSocketSnapshot>,
     process_map: String,
 }
 
@@ -579,6 +750,9 @@ impl SocketDetailState {
             last_at: opened_at,
             last_sequence: initial_snapshot.sequence(),
             observed_latest: socket.is_some(),
+            peer: socket
+                .and_then(|socket| initial_snapshot.local_peer(socket))
+                .cloned(),
             last_observed: socket.cloned().unwrap_or(selected_socket),
             process_map: if socket.is_some() {
                 initial_snapshot.process_map_summary()
@@ -595,6 +769,9 @@ impl SocketDetailState {
         let at = snapshot.attempted_at().max(self.last_at);
         let socket = snapshot.socket(&self.key);
         self.observed_latest = socket.is_some();
+        self.peer = socket
+            .and_then(|socket| snapshot.local_peer(socket))
+            .cloned();
         if let Some(socket) = socket {
             self.last_observed = socket.clone();
             self.process_map = snapshot.process_map_summary();
@@ -609,6 +786,10 @@ impl SocketDetailState {
 
     pub(crate) const fn socket(&self) -> &InetSocketSnapshot {
         &self.last_observed
+    }
+
+    pub(crate) fn peer(&self) -> Option<&InetSocketSnapshot> {
+        self.peer.as_ref()
     }
 
     pub(crate) fn process_map_summary(&self) -> &str {
@@ -719,6 +900,7 @@ impl SocketProjector {
         let mut next = BTreeMap::new();
         let mut completed_queries = 0_usize;
         let mut errors = Vec::new();
+        let mut unsupported = Vec::new();
         let mut sockets = Vec::new();
 
         for query in bounded.collection.queries {
@@ -738,7 +920,7 @@ impl SocketProjector {
                             })
                             .filter(|elapsed| *elapsed > Duration::ZERO);
                         let counters = raw_counters(&row);
-                        let projected = project_socket(
+                        let mut projected = project_socket(
                             &row,
                             before.map(|before| &before.counters),
                             elapsed,
@@ -746,6 +928,7 @@ impl SocketProjector {
                             sequence,
                             sockets.len(),
                         );
+                        projected.owner_coverage = process_scan.coverage_for(&row.identity);
                         if row.identity.is_matchable() {
                             next.insert(
                                 row.identity.clone(),
@@ -757,6 +940,13 @@ impl SocketProjector {
                         }
                         sockets.push(projected);
                     }
+                }
+                Err(error) if error.kind() == CollectErrorKind::Unsupported => {
+                    unsupported.push(format!(
+                        "{}{}",
+                        query.protocol.label(),
+                        query.family.label()
+                    ));
                 }
                 Err(error) => errors.push(error),
             }
@@ -773,6 +963,7 @@ impl SocketProjector {
         }
 
         Arc::new(SocketTableSnapshot {
+            unsupported,
             sequence,
             attempted_at,
             collection_duration,
@@ -825,24 +1016,29 @@ fn project_socket(
     let counters = raw_counters(socket);
     let tcp_info = connection_tcp_info(socket);
     InetSocketSnapshot {
-        row_key: SocketRowKey::new(&socket.identity, sequence, ordinal),
-        family: match socket.family {
-            RawFamily::Ipv4 => SocketFamily::Ipv4,
-            RawFamily::Ipv6 => SocketFamily::Ipv6,
+        details: socket.details.clone(),
+        row_key: if socket.protocol == RawProtocol::Sctp && socket.identity.is_matchable() {
+            SocketRowKey(SocketRowIdentity::Association(
+                socket.identity.clone(),
+                socket.local.clone(),
+                socket.remote.clone(),
+                socket.details.association,
+            ))
+        } else {
+            SocketRowKey::new(&socket.identity, sequence, ordinal)
         },
-        protocol: match socket.protocol {
-            RawProtocol::Tcp => SocketProtocol::Tcp,
-            RawProtocol::Udp => SocketProtocol::Udp,
-        },
-        state: socket_state(socket.protocol, socket.state),
-        local: SocketEndpoint {
-            address: socket.local.address,
-            port: socket.local.port,
-        },
-        remote: SocketEndpoint {
-            address: socket.remote.address,
-            port: socket.remote.port,
-        },
+        family: socket.family,
+        protocol: socket.protocol,
+        state: socket_state(
+            if socket.protocol == RawProtocol::Sctp && !socket.details.association {
+                RawProtocol::Tcp
+            } else {
+                socket.protocol
+            },
+            socket.state,
+        ),
+        local: socket.local.clone(),
+        remote: socket.remote.clone(),
         bound_ifindex: socket.bound_ifindex,
         expires_millis: socket.expires_millis,
         receive_queue: socket.receive_queue,
@@ -856,6 +1052,7 @@ fn project_socket(
             })
             .collect::<Vec<_>>()
             .into(),
+        owner_coverage: SocketProcessCoverage::Pending,
         congestion_algorithm: tcp_info.and(socket.congestion_algorithm.clone()),
         memory: socket.memory.map(project_socket_memory),
         tcp: tcp_info.map(|info| {
@@ -1006,6 +1203,39 @@ fn compare_socket_activity(left: &InetSocketSnapshot, right: &InetSocketSnapshot
 }
 
 fn socket_state(protocol: RawProtocol, state: u8) -> String {
+    if protocol == RawProtocol::Sctp {
+        return match state {
+            0 => "CLOSED",
+            1 => "COOKIE_WAIT",
+            2 => "COOKIE_ECHOED",
+            3 => "ESTABLISHED",
+            4 => "SHUTDOWN_PENDING",
+            5 => "SHUTDOWN_SENT",
+            6 => "SHUTDOWN_RECEIVED",
+            7 => "SHUTDOWN_ACK_SENT",
+            10 => "LISTEN",
+            _ => return format!("STATE#{state}"),
+        }
+        .to_owned();
+    }
+    if !matches!(protocol, RawProtocol::Tcp | RawProtocol::Udp) {
+        return match state {
+            1 => "ESTABLISHED",
+            2 => "SYN_SENT",
+            3 => "SYN_RECV",
+            4 => "FIN_WAIT1",
+            5 => "FIN_WAIT2",
+            6 => "TIME_WAIT",
+            7 => "UNCONN",
+            8 => "CLOSE_WAIT",
+            9 => "LAST_ACK",
+            10 => "LISTEN",
+            11 => "CLOSING",
+            12 => "NEW_SYN_RECV",
+            _ => return format!("STATE#{state}"),
+        }
+        .to_owned();
+    }
     let state = match (protocol, state) {
         (RawProtocol::Udp, 1) => "CONNECTED",
         (RawProtocol::Udp, 7) => "UNCONN",
@@ -1066,7 +1296,7 @@ fn collection_health(
     truncated: bool,
     process_coverage: SocketProcessCoverage,
 ) -> ProviderHealth {
-    if completed_queries == QUERY_COUNT
+    if completed_queries > 0
         && errors.is_empty()
         && !truncated
         && matches!(
@@ -1091,7 +1321,7 @@ fn collection_health(
 
     if completed_queries > 0 {
         let diagnostic = format!(
-            "socket queries {completed_queries}/{QUERY_COUNT}; failed {}; truncated {}; process map {}{primary_diagnostic}",
+            "socket queries {completed_queries} complete; failed {}; truncated {}; process map {}{primary_diagnostic}",
             errors.len(),
             if truncated { "yes" } else { "no" },
             process_coverage.summary(),
@@ -1407,6 +1637,7 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
         byte_interval: CounterSpan::new(byte_delta, Duration::from_secs(1)).ok(),
     };
     Arc::new(SocketTableSnapshot {
+        unsupported: Vec::new(),
         sequence,
         attempted_at: Duration::from_secs(sequence),
         collection_duration: Duration::from_millis(3),
@@ -1422,6 +1653,7 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
         scanned_fds: 8,
         sockets: vec![
             InetSocketSnapshot {
+                details: Default::default(),
                 row_key: SocketRowKey::new(
                     &SocketIdentity::synthetic(RawFamily::Ipv4, RawProtocol::Tcp, 7),
                     sequence,
@@ -1430,11 +1662,11 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
                 family: SocketFamily::Ipv4,
                 protocol: SocketProtocol::Tcp,
                 state: "ESTABLISHED".to_owned(),
-                local: SocketEndpoint {
+                local: SocketEndpoint::Inet {
                     address: "192.0.2.10".parse().unwrap(),
                     port: 42_000,
                 },
-                remote: SocketEndpoint {
+                remote: SocketEndpoint::Inet {
                     address: "198.51.100.20".parse().unwrap(),
                     port: 443,
                 },
@@ -1448,6 +1680,7 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
                     command: Some("client-worker".to_owned()),
                 }]
                 .into(),
+                owner_coverage: SocketProcessCoverage::Complete,
                 congestion_algorithm: Some("cubic".to_owned()),
                 memory: Some(SocketMemoryDiagnostics {
                     receive_allocated: 4_096,
@@ -1505,6 +1738,7 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
                 sort_inode: 7,
             },
             InetSocketSnapshot {
+                details: Default::default(),
                 row_key: SocketRowKey::new(
                     &SocketIdentity::synthetic(RawFamily::Ipv6, RawProtocol::Udp, 8),
                     sequence,
@@ -1513,11 +1747,11 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
                 family: SocketFamily::Ipv6,
                 protocol: SocketProtocol::Udp,
                 state: "UNCONN".to_owned(),
-                local: SocketEndpoint {
+                local: SocketEndpoint::Inet {
                     address: "2001:db8::1".parse().unwrap(),
                     port: 53,
                 },
-                remote: SocketEndpoint {
+                remote: SocketEndpoint::Inet {
                     address: "::".parse().unwrap(),
                     port: 0,
                 },
@@ -1527,6 +1761,7 @@ pub(crate) fn synthetic_socket_table_snapshot_at(sequence: u64) -> Arc<SocketTab
                 send_queue: 0,
                 uid: 53,
                 owners: Arc::from([]),
+                owner_coverage: SocketProcessCoverage::Complete,
                 congestion_algorithm: None,
                 memory: Some(SocketMemoryDiagnostics {
                     receive_allocated: 64,
@@ -1572,7 +1807,9 @@ pub(crate) fn synthetic_socket_sort_snapshot(sequence: u64) -> Arc<SocketTableSn
         sequence,
         2,
     );
-    second.local.port = 43_000;
+    if let SocketEndpoint::Inet { port, .. } = &mut second.local {
+        *port = 43_000;
+    }
     second.receive_queue = 64;
     second.send_queue = 512;
     sockets[0].receive.bytes = Some(u64::MAX - 1);
@@ -1674,8 +1911,278 @@ pub(crate) fn synthetic_socket_table_snapshot_without_tcp_at(
 }
 
 #[cfg(test)]
+pub(crate) fn synthetic_local_socket_pair() -> SocketTableSnapshot {
+    synthetic_local_socket_pair_at(1, false, false)
+}
+
+#[cfg(test)]
+pub(crate) fn synthetic_local_socket_pair_at(
+    sequence: u64,
+    reverse: bool,
+    reverse_keys: bool,
+) -> SocketTableSnapshot {
+    let mut snapshot = (*synthetic_socket_table_snapshot_at(sequence)).clone();
+    let client = snapshot.sockets[0].clone();
+    let mut server = client.clone();
+    server.row_key = SocketRowKey::new(
+        &SocketIdentity::synthetic(RawFamily::Ipv4, RawProtocol::Tcp, 99),
+        1,
+        1,
+    );
+    std::mem::swap(&mut server.local, &mut server.remote);
+    server.owners = vec![SocketOwner {
+        pid: 5678,
+        command: Some("server-worker".into()),
+    }]
+    .into();
+    snapshot.sockets = vec![client, server].into();
+    if reverse_keys {
+        let sockets = Arc::make_mut(&mut snapshot.sockets);
+        let (first, rest) = sockets.split_at_mut(1);
+        std::mem::swap(&mut first[0].row_key, &mut rest[0].row_key);
+    }
+    if reverse {
+        Arc::make_mut(&mut snapshot.sockets).reverse();
+    }
+    snapshot
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_filter_matches_any_known_owner_and_preserves_private_names() {
+        let snapshot = synthetic_socket_table_snapshot();
+        let mut socket = snapshot.sockets[0].clone();
+        for query in ["proc CLIENT", "proc\tworker", " proc  client-worker "] {
+            let filter = SocketFilter::parse(query).unwrap().unwrap();
+            assert_eq!(filter.query(), query.trim());
+            assert!(filter.matches(&socket));
+            assert!(!format!("{filter:?}").contains("client-worker"));
+        }
+        let filter = SocketFilter::parse("proc sidecar").unwrap().unwrap();
+        assert!(!filter.matches(&socket));
+        socket.owners = vec![
+            SocketOwner {
+                pid: 1,
+                command: None,
+            },
+            SocketOwner {
+                pid: 2,
+                command: Some("SideCar Agent".into()),
+            },
+        ]
+        .into();
+        assert!(filter.matches(&socket));
+        assert!(SocketFilter::parse("proc sidecar agent")
+            .unwrap()
+            .unwrap()
+            .matches(&socket));
+        socket.owners = Arc::from([]);
+        assert!(!filter.matches(&socket));
+        assert!(!SocketFilter::parse("proc resolving")
+            .unwrap()
+            .unwrap()
+            .matches(&socket));
+        for query in [
+            "proc",
+            "proc  ",
+            "proc\t",
+            "proc=worker",
+            "process=worker",
+            "procworker",
+        ] {
+            assert!(SocketFilter::parse(query).is_err());
+        }
+        assert!(SocketFilter::parse(&format!("proc {}", "x".repeat(512))).is_err());
+    }
+
+    #[test]
+    fn unix_peers_use_mutual_inode_references_and_filters_never_fake_ip_endpoints() {
+        let mut snapshot = synthetic_local_socket_pair();
+        let sockets = Arc::make_mut(&mut snapshot.sockets);
+        for (index, socket) in sockets.iter_mut().enumerate() {
+            socket.sort_inode = index as u32 + 100;
+            socket.family = SocketFamily::Unix;
+            socket.protocol = SocketProtocol::Unix;
+            socket.details.socket_type = 1;
+            socket.local = SocketEndpoint::Unix {
+                name: None,
+                inode: socket.sort_inode,
+            };
+        }
+        sockets[0].remote = sockets[1].local.clone();
+        sockets[1].remote = sockets[0].local.clone();
+        sockets[0].local = SocketEndpoint::Unix {
+            name: Some("@service".into()),
+            inode: sockets[0].sort_inode,
+        };
+        assert!(snapshot.local_peer(&snapshot.sockets[0]).is_some());
+        for filter in ["unix", "type=unix_stream", "path=@service"] {
+            assert!(SocketFilter::parse(filter)
+                .unwrap()
+                .unwrap()
+                .matches(&snapshot.sockets[0]));
+        }
+        for filter in ["tcp", "unix_dgram", "host 0.0.0.0", "port=0"] {
+            assert!(!SocketFilter::parse(filter)
+                .unwrap()
+                .unwrap()
+                .matches(&snapshot.sockets[0]));
+        }
+        assert!(
+            !format!("{:?}", SocketFilter::parse("path=@private").unwrap()).contains("@private")
+        );
+        Arc::make_mut(&mut snapshot.sockets)[1].remote = SocketEndpoint::Unspecified;
+        assert!(snapshot.local_peer(&snapshot.sockets[0]).is_none());
+    }
+
+    #[test]
+    fn non_inet_rows_preserve_unknown_fields_and_sctp_associations_have_distinct_keys() {
+        let mut raw = raw_socket(1, RawProtocol::Tcp, 1, 1, 1, 1, 1);
+        raw.protocol = RawProtocol::Vsock;
+        raw.family = RawFamily::Vsock;
+        raw.local = SocketEndpoint::Vsock {
+            cid: 2,
+            port: 1_000_000,
+        };
+        raw.remote = SocketEndpoint::Vsock {
+            cid: 3,
+            port: 2_000_000,
+        };
+        raw.details.queue_kind = QueueKind::Unavailable;
+        raw.details.uid_unavailable = true;
+        let projected = project_socket(&raw, None, None, &[], 1, 0);
+        assert!(projected.tcp().is_none());
+        assert!(projected.receive_traffic().bytes().is_none());
+        assert_eq!(projected.queue_kind(), QueueKind::Unavailable);
+        assert_eq!(projected.local.to_string(), "2:1000000");
+        assert!(SocketFilter::parse("vsock")
+            .unwrap()
+            .unwrap()
+            .matches(&projected));
+
+        raw.protocol = RawProtocol::Sctp;
+        raw.family = RawFamily::Ipv4;
+        let a = project_socket(&raw, None, None, &[], 1, 0);
+        raw.remote = SocketEndpoint::Inet {
+            address: "192.0.2.1".parse().unwrap(),
+            port: 9999,
+        };
+        let b = project_socket(&raw, None, None, &[], 1, 1);
+        assert_ne!(a.row_key(), b.row_key());
+    }
+
+    #[test]
+    fn local_peer_matches_both_directions_and_never_a_listener_or_udp() {
+        let snapshot = synthetic_local_socket_pair();
+        for (local, remote) in [(0, 1), (1, 0)] {
+            assert_eq!(
+                snapshot
+                    .local_peer(&snapshot.sockets[local])
+                    .unwrap()
+                    .row_key(),
+                snapshot.sockets[remote].row_key()
+            );
+        }
+        for listener in [true, false] {
+            let mut changed = snapshot.clone();
+            let sockets = Arc::make_mut(&mut changed.sockets);
+            if listener {
+                sockets[1].state = "LISTEN".into();
+            } else {
+                sockets[1].protocol = SocketProtocol::Udp;
+            }
+            assert!(changed.local_peer(&changed.sockets[0]).is_none());
+        }
+        let mut ambiguous = snapshot.clone();
+        ambiguous.sockets = vec![
+            snapshot.sockets[0].clone(),
+            snapshot.sockets[1].clone(),
+            snapshot.sockets[1].clone(),
+        ]
+        .into();
+        assert!(ambiguous.local_peer(&ambiguous.sockets[0]).is_none());
+    }
+
+    #[test]
+    fn local_peer_supports_ipv6_and_ipv4_mapped_addresses_but_respects_devices() {
+        fn set_address(endpoint: &mut SocketEndpoint, value: &str) {
+            if let SocketEndpoint::Inet { address, .. } = endpoint {
+                *address = value.parse().unwrap();
+            }
+        }
+        for mapped in [false, true] {
+            let mut snapshot = synthetic_local_socket_pair();
+            let sockets = Arc::make_mut(&mut snapshot.sockets);
+            if mapped {
+                set_address(&mut sockets[1].local, "::ffff:198.51.100.20");
+                set_address(&mut sockets[1].remote, "::ffff:192.0.2.10");
+            } else {
+                set_address(&mut sockets[0].local, "::1");
+                set_address(&mut sockets[0].remote, "::1");
+                sockets[0].family = SocketFamily::Ipv6;
+                set_address(&mut sockets[1].local, "::1");
+                set_address(&mut sockets[1].remote, "::1");
+            }
+            sockets[1].family = SocketFamily::Ipv6;
+            assert!(snapshot.local_peer(&snapshot.sockets[0]).is_some());
+            Arc::make_mut(&mut snapshot.sockets)[1].bound_ifindex = 9;
+            assert!(snapshot.local_peer(&snapshot.sockets[0]).is_none());
+        }
+    }
+
+    #[test]
+    fn detail_drops_peer_when_either_endpoint_disappears() {
+        let mut snapshot = synthetic_local_socket_pair();
+        let key = snapshot.sockets[0].row_key.clone();
+        let mut detail = SocketDetailState::start(&snapshot, key).unwrap();
+        assert_eq!(detail.peer().unwrap().owners()[0].pid(), 5678);
+        snapshot.sequence += 1;
+        snapshot.sockets = vec![snapshot.sockets[0].clone()].into();
+        detail.record(&snapshot);
+        assert!(detail.observed_latest());
+        assert!(detail.peer().is_none());
+        snapshot.sequence += 1;
+        snapshot.sockets = Arc::from([]);
+        detail.record(&snapshot);
+        assert!(!detail.observed_latest());
+        assert!(detail.peer().is_none());
+    }
+
+    #[test]
+    fn owner_status_distinguishes_pending_unmatched_and_scan_failures() {
+        let snapshot = synthetic_socket_table_snapshot();
+        let mut socket = snapshot.sockets[1].clone();
+        for (coverage, label) in [
+            (SocketProcessCoverage::Pending, "resolving"),
+            (SocketProcessCoverage::Complete, "unmatched"),
+            (SocketProcessCoverage::PermissionDenied, "denied"),
+            (SocketProcessCoverage::Unavailable, "unavailable"),
+            (
+                SocketProcessCoverage::Partial {
+                    permission_denied_processes: 1,
+                    io_errors: 0,
+                    truncated: false,
+                },
+                "restricted",
+            ),
+            (
+                SocketProcessCoverage::Partial {
+                    permission_denied_processes: 0,
+                    io_errors: 0,
+                    truncated: true,
+                },
+                "partial",
+            ),
+        ] {
+            socket.owner_coverage = coverage;
+            assert_eq!(socket.owner_status(), label);
+        }
+        socket.sort_inode = 0;
+        assert_eq!(socket.owner_status(), "-");
+    }
 
     #[test]
     fn socket_filter_accepts_conntrack_style_terms() {
@@ -1700,17 +2207,18 @@ mod tests {
     ) -> RawSocket {
         let family = RawFamily::Ipv4;
         RawSocket {
+            details: Default::default(),
             identity: SocketIdentity::synthetic(family, protocol, seed),
             family,
             protocol,
             state,
             timer: 0,
             retransmits: 0,
-            local: sock_diag::SocketEndpoint {
+            local: sock_diag::SocketEndpoint::Inet {
                 address: "192.0.2.10".parse().unwrap(),
                 port: 42_000,
             },
-            remote: sock_diag::SocketEndpoint {
+            remote: sock_diag::SocketEndpoint::Inet {
                 address: "198.51.100.20".parse().unwrap(),
                 port: 443,
             },
@@ -2034,7 +2542,7 @@ mod tests {
             let row = snapshot
                 .sockets()
                 .iter()
-                .find(|row| row.local().port() == port && row.state() == "ESTABLISHED")
+                .find(|row| row.local().port() == Some(port) && row.state() == "ESTABLISHED")
                 .expect("live loopback connection");
             let owned = row
                 .owners()

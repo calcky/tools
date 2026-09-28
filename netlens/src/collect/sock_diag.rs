@@ -6,6 +6,11 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+mod families;
+mod proc_raw;
+mod types;
+pub(crate) use types::{QueueKind, SocketDetails, SocketEndpoint, SocketFamily, SocketProtocol};
+
 const ALIGNMENT: usize = 4;
 const NLMSG_HEADER_LEN: usize = 16;
 const INET_DIAG_REQ_V2_LEN: usize = 56;
@@ -95,28 +100,28 @@ const QUERY_COUNT: usize = 4;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Query {
     family: u8,
-    protocol: u8,
+    protocol: u16,
 }
 
 impl Query {
     const IPV4_TCP: Self = Self {
         family: libc::AF_INET as u8,
-        protocol: libc::IPPROTO_TCP as u8,
+        protocol: libc::IPPROTO_TCP as u16,
     };
 
     const IPV6_UDP: Self = Self {
         family: libc::AF_INET6 as u8,
-        protocol: libc::IPPROTO_UDP as u8,
+        protocol: libc::IPPROTO_UDP as u16,
     };
 
     const IPV4_UDP: Self = Self {
         family: libc::AF_INET as u8,
-        protocol: libc::IPPROTO_UDP as u8,
+        protocol: libc::IPPROTO_UDP as u16,
     };
 
     const IPV6_TCP: Self = Self {
         family: libc::AF_INET6 as u8,
-        protocol: libc::IPPROTO_TCP as u8,
+        protocol: libc::IPPROTO_TCP as u16,
     };
 
     const ALL: [Self; QUERY_COUNT] = [
@@ -126,54 +131,43 @@ impl Query {
         Self::IPV6_UDP,
     ];
 
-    const fn label(self) -> &'static str {
-        match (self.family as i32, self.protocol as i32) {
-            (libc::AF_INET, libc::IPPROTO_TCP) => "IPv4 TCP",
-            (libc::AF_INET, libc::IPPROTO_UDP) => "IPv4 UDP",
-            (libc::AF_INET6, libc::IPPROTO_TCP) => "IPv6 TCP",
-            (libc::AF_INET6, libc::IPPROTO_UDP) => "IPv6 UDP",
-            _ => "unsupported socket query",
-        }
+    fn label(self) -> String {
+        format!("{}{}", self.protocol().label(), self.family().label())
     }
 
     const fn family(self) -> SocketFamily {
         match self.family as i32 {
             libc::AF_INET => SocketFamily::Ipv4,
             libc::AF_INET6 => SocketFamily::Ipv6,
+            1 => SocketFamily::Unix,
+            17 => SocketFamily::Packet,
+            16 => SocketFamily::Netlink,
+            40 => SocketFamily::Vsock,
+            30 => SocketFamily::Tipc,
+            44 => SocketFamily::Xdp,
             _ => unreachable!(),
         }
     }
 
     const fn protocol(self) -> SocketProtocol {
+        match self.family {
+            1 => return SocketProtocol::Unix,
+            17 => return SocketProtocol::Packet,
+            16 => return SocketProtocol::Netlink,
+            40 => return SocketProtocol::Vsock,
+            30 => return SocketProtocol::Tipc,
+            44 => return SocketProtocol::Xdp,
+            _ => {}
+        }
         match self.protocol as i32 {
             libc::IPPROTO_TCP => SocketProtocol::Tcp,
             libc::IPPROTO_UDP => SocketProtocol::Udp,
+            255 => SocketProtocol::Raw,
+            33 => SocketProtocol::Dccp,
+            132 => SocketProtocol::Sctp,
+            262 => SocketProtocol::Mptcp,
             _ => unreachable!(),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum SocketFamily {
-    Ipv4,
-    Ipv6,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum SocketProtocol {
-    Tcp,
-    Udp,
-}
-
-#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SocketEndpoint {
-    pub(crate) address: IpAddr,
-    pub(crate) port: u16,
-}
-
-impl fmt::Debug for SocketEndpoint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SocketEndpoint(<redacted>)")
     }
 }
 
@@ -252,12 +246,16 @@ pub(crate) struct SocketTcpInfo {
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SocketIdentity {
     family: u8,
-    protocol: u8,
+    protocol: u16,
     cookie: [u32; 2],
     inode: u32,
 }
 
 impl SocketIdentity {
+    pub(crate) const fn is_tcp(&self) -> bool {
+        matches!(self.family, 2 | 10) && matches!(self.protocol, 6 | 262)
+    }
+
     pub(crate) fn is_matchable(&self) -> bool {
         self.cookie != INET_DIAG_NOCOOKIE && self.inode != 0
     }
@@ -280,14 +278,8 @@ impl SocketIdentity {
         seed: u32,
     ) -> Self {
         Self {
-            family: match family {
-                SocketFamily::Ipv4 => libc::AF_INET as u8,
-                SocketFamily::Ipv6 => libc::AF_INET6 as u8,
-            },
-            protocol: match protocol {
-                SocketProtocol::Tcp => libc::IPPROTO_TCP as u8,
-                SocketProtocol::Udp => libc::IPPROTO_UDP as u8,
-            },
+            family: family.number(),
+            protocol: protocol.number(),
             cookie: [seed, seed.wrapping_mul(17)],
             inode: seed.wrapping_add(100),
         }
@@ -308,6 +300,7 @@ pub(crate) struct SocketDropSample {
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct RawSocket {
+    pub(crate) details: SocketDetails,
     pub(crate) identity: SocketIdentity,
     pub(crate) family: SocketFamily,
     pub(crate) protocol: SocketProtocol,
@@ -529,13 +522,22 @@ impl Context {
         &mut self,
         cancelled: Option<&AtomicBool>,
     ) -> Option<SocketTableCollection> {
-        let mut queries = Vec::with_capacity(QUERY_COUNT);
-        for query in Query::ALL {
+        let mut queries = Vec::new();
+        for query in families::table_queries() {
             if is_cancelled(cancelled) {
                 self.socket = None;
                 return None;
             }
-            let collected = self.query(query, true, cancelled);
+            let collected = match self.query(query, true, cancelled) {
+                Err(error)
+                    if query.protocol == 255
+                        && matches!(query.family, 2 | 10)
+                        && error.kind() == CollectErrorKind::Unsupported =>
+                {
+                    proc_raw::collect(query, cancelled)
+                }
+                result => result,
+            };
             let completed_at = Instant::now();
             let outcome = match collected {
                 Ok(Some(dump)) => SocketTableQueryResult {
@@ -885,7 +887,7 @@ fn send_request(
     include_tcp_info: bool,
     sequence: u32,
 ) -> Result<(), CollectError> {
-    let request = build_request_with_tcp_info(query, sequence, socket.port_id, include_tcp_info);
+    let request = families::request(query, sequence, socket.port_id, include_tcp_info);
     let mut kernel: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
     kernel.nl_family = libc::AF_NETLINK as libc::sa_family_t;
 
@@ -1050,11 +1052,11 @@ fn build_request_with_tcp_info(
     put_u32(&mut request[8..12], sequence);
     put_u32(&mut request[12..16], port_id);
     request[16] = query.family;
-    request[17] = query.protocol;
+    request[17] = query.protocol as u8;
     request[18] = 1 << (INET_DIAG_SKMEMINFO - 1);
-    if include_tcp_info {
+    if include_tcp_info && matches!(query.protocol, 6 | 17) {
         request[18] |= 1 << (INET_DIAG_INFO - 1);
-        if query.protocol == libc::IPPROTO_TCP as u8 {
+        if query.protocol == libc::IPPROTO_TCP as u16 {
             request[18] |= 1 << (INET_DIAG_CONG - 1);
         }
     }
@@ -1161,12 +1163,26 @@ impl DumpParser {
                     ));
                 }
                 SOCK_DIAG_BY_FAMILY => {
-                    if flags & NLM_F_MULTI == 0 {
+                    // SCTP emits association records without MULTI, followed by DONE.
+                    if flags & NLM_F_MULTI == 0 && self.query.protocol != 132 {
                         return Err(CollectError::parse(
                             "SOCK_DIAG_BY_FAMILY dump response is not multipart",
                         ));
                     }
+                    let before = self.sockets.len();
                     self.parse_socket(payload)?;
+                    if self.query.protocol == 132 && self.sockets.len() > before {
+                        self.sockets.last_mut().unwrap().details.association =
+                            flags & NLM_F_MULTI == 0;
+                        self.sockets.last_mut().unwrap().details.field(
+                            "RECORD",
+                            if flags & NLM_F_MULTI == 0 {
+                                "association"
+                            } else {
+                                "endpoint"
+                            },
+                        );
+                    }
                 }
                 _ => {
                     return Err(CollectError::parse(format!(
@@ -1200,13 +1216,31 @@ impl DumpParser {
                     "SOCK_DIAG_BY_FAMILY dump contains a duplicate private socket identity",
                 ));
             }
-            self.sockets
-                .sort_by(|left, right| left.identity.cmp(&right.identity));
-            if self
-                .sockets
-                .windows(2)
-                .any(|pair| pair[0].identity == pair[1].identity)
-            {
+            self.sockets.sort_by(|left, right| {
+                left.identity
+                    .cmp(&right.identity)
+                    .then_with(|| left.local.cmp(&right.local))
+                    .then_with(|| left.remote.cmp(&right.remote))
+                    .then_with(|| left.details.association.cmp(&right.details.association))
+            });
+            if self.query.family == 16 {
+                // Netlink dumps visit both the bind hash and multicast list;
+                // a bound subscriber can legitimately appear in both.
+                let before = self.sockets.len();
+                self.sockets
+                    .dedup_by(|a, b| a.identity == b.identity && a.local == b.local);
+                self.observed_sockets = self
+                    .observed_sockets
+                    .saturating_sub(before - self.sockets.len());
+            }
+            if self.sockets.windows(2).any(|pair| {
+                pair[0].identity.is_matchable()
+                    && pair[0].identity == pair[1].identity
+                    && (self.query.protocol != 132
+                        || (pair[0].local == pair[1].local
+                            && pair[0].remote == pair[1].remote
+                            && pair[0].details.association == pair[1].details.association))
+            }) {
                 return Err(CollectError::parse(
                     "SOCK_DIAG_BY_FAMILY dump contains a duplicate private socket identity",
                 ));
@@ -1225,6 +1259,16 @@ impl DumpParser {
     }
 
     fn parse_socket(&mut self, payload: &[u8]) -> Result<(), CollectError> {
+        if !matches!(self.query.family, 2 | 10) {
+            let socket = families::parse(self.query, payload)?;
+            self.observed_sockets = self.observed_sockets.saturating_add(1);
+            if self.sockets.len() < self.sample_limit {
+                self.sockets.push(socket);
+            } else {
+                self.table_truncated = true;
+            }
+            return Ok(());
+        }
         if payload.len() < INET_DIAG_MSG_LEN {
             return Err(CollectError::parse(format!(
                 "SOCK_DIAG_BY_FAMILY payload has {} bytes; expected at least {INET_DIAG_MSG_LEN}",
@@ -1259,6 +1303,7 @@ impl DumpParser {
         let mut memory = None;
         let mut tcp_info = None;
         let mut congestion_algorithm = None;
+        let mut details = SocketDetails::default();
         let mut offset = INET_DIAG_MSG_LEN;
         while offset < payload.len() {
             if payload.len() - offset < RTATTR_HEADER_LEN {
@@ -1291,7 +1336,10 @@ impl DumpParser {
                 if self.retain_table {
                     memory = Some(parsed);
                 }
-            } else if attribute_type == INET_DIAG_INFO && self.retain_table {
+            } else if attribute_type == INET_DIAG_INFO
+                && self.retain_table
+                && matches!(self.query.protocol, 6 | 17)
+            {
                 if raw_attribute_type != INET_DIAG_INFO {
                     return Err(CollectError::parse(
                         "INET_DIAG_INFO uses unsupported netlink attribute flags",
@@ -1302,13 +1350,16 @@ impl DumpParser {
                         "SOCK_DIAG_BY_FAMILY response contains duplicate INET_DIAG_INFO attributes",
                     ));
                 }
-                if self.query.protocol != libc::IPPROTO_TCP as u8 {
+                if self.query.protocol != libc::IPPROTO_TCP as u16 {
                     return Err(CollectError::parse(
                         "non-TCP SOCK_DIAG_BY_FAMILY response contains INET_DIAG_INFO",
                     ));
                 }
                 tcp_info = Some(parse_tcp_info(value)?);
-            } else if attribute_type == INET_DIAG_CONG && self.retain_table {
+            } else if attribute_type == INET_DIAG_CONG
+                && self.retain_table
+                && matches!(self.query.protocol, 6 | 17)
+            {
                 if raw_attribute_type != INET_DIAG_CONG {
                     return Err(CollectError::parse(
                         "INET_DIAG_CONG uses unsupported netlink attribute flags",
@@ -1319,12 +1370,14 @@ impl DumpParser {
                         "SOCK_DIAG_BY_FAMILY response contains duplicate INET_DIAG_CONG attributes",
                     ));
                 }
-                if self.query.protocol != libc::IPPROTO_TCP as u8 {
+                if self.query.protocol != libc::IPPROTO_TCP as u16 {
                     return Err(CollectError::parse(
                         "non-TCP SOCK_DIAG_BY_FAMILY response contains INET_DIAG_CONG",
                     ));
                 }
                 congestion_algorithm = Some(parse_congestion_algorithm(value)?);
+            } else if self.retain_table {
+                families::inet_field(self.query, attribute_type, value, &mut details)?;
             }
 
             let aligned_len = align(attribute_len);
@@ -1338,15 +1391,29 @@ impl DumpParser {
         }
 
         if retain_table_socket {
+            let mut local = parse_endpoint(self.query.family(), &payload[4..6], &payload[8..24]);
+            let mut remote = parse_endpoint(self.query.family(), &payload[6..8], &payload[24..40]);
+            if self.query.protocol == 255 {
+                let (address, _) = local.inet().unwrap();
+                let protocol = details
+                    .ip_protocol
+                    .ok_or_else(|| CollectError::parse("missing RAW IP protocol attribute"))?;
+                local = SocketEndpoint::Raw { address, protocol };
+                remote = SocketEndpoint::Raw {
+                    address: remote.inet().unwrap().0,
+                    protocol,
+                };
+            }
             self.sockets.push(RawSocket {
+                details,
                 identity,
                 family: self.query.family(),
                 protocol: self.query.protocol(),
                 state: payload[1],
                 timer: payload[2],
                 retransmits: payload[3],
-                local: parse_endpoint(self.query.family(), &payload[4..6], &payload[8..24]),
-                remote: parse_endpoint(self.query.family(), &payload[6..8], &payload[24..40]),
+                local,
+                remote,
                 bound_ifindex: read_u32(&payload[40..44]),
                 expires_millis: read_u32(&payload[52..56]),
                 receive_queue: read_u32(&payload[56..60]),
@@ -1371,8 +1438,9 @@ fn parse_endpoint(family: SocketFamily, port: &[u8], address: &[u8]) -> SocketEn
         SocketFamily::Ipv6 => IpAddr::V6(Ipv6Addr::from(
             <[u8; 16]>::try_from(address).expect("IPv6 inet_diag address length is checked"),
         )),
+        _ => unreachable!("INET parser only accepts IP families"),
     };
-    SocketEndpoint {
+    SocketEndpoint::Inet {
         address,
         port: u16::from_be_bytes(
             port.try_into()
@@ -1649,7 +1717,7 @@ mod tests {
             assert_eq!(read_u32(&request[8..12]), SEQUENCE);
             assert_eq!(read_u32(&request[12..16]), PORT_ID);
             assert_eq!(request[16], query.family);
-            assert_eq!(request[17], query.protocol);
+            assert_eq!(request[17], query.protocol as u8);
             assert_eq!(request[18], 1 << (INET_DIAG_SKMEMINFO - 1));
             assert_eq!(request[19], 0);
             assert_eq!(read_u32(&request[20..24]), u32::MAX);
@@ -1662,7 +1730,7 @@ mod tests {
         for query in Query::ALL {
             let drop_request = build_request(query, SEQUENCE, PORT_ID);
             let table_request = build_request_with_tcp_info(query, SEQUENCE, PORT_ID, true);
-            let congestion = if query.protocol == libc::IPPROTO_TCP as u8 {
+            let congestion = if query.protocol == libc::IPPROTO_TCP as u16 {
                 1 << (INET_DIAG_CONG - 1)
             } else {
                 0
@@ -1727,14 +1795,14 @@ mod tests {
         assert_eq!((socket.state, socket.timer, socket.retransmits), (1, 4, 2));
         assert_eq!(
             socket.local,
-            SocketEndpoint {
+            SocketEndpoint::Inet {
                 address: "192.0.2.10".parse().unwrap(),
                 port: 44_321,
             }
         );
         assert_eq!(
             socket.remote,
-            SocketEndpoint {
+            SocketEndpoint::Inet {
                 address: "198.51.100.7".parse().unwrap(),
                 port: 443,
             }
@@ -1793,15 +1861,15 @@ mod tests {
         assert_eq!(socket.protocol, SocketProtocol::Udp);
         assert_eq!(socket.state, 7);
         assert_eq!(
-            socket.local.address,
+            socket.local.inet().unwrap().0,
             "2001:db8::1".parse::<IpAddr>().unwrap()
         );
-        assert_eq!(socket.local.port, 53);
+        assert_eq!(socket.local.port(), Some(53));
         assert_eq!(
-            socket.remote.address,
+            socket.remote.inet().unwrap().0,
             "2001:db8::2".parse::<IpAddr>().unwrap()
         );
-        assert_eq!(socket.remote.port, 53_000);
+        assert_eq!(socket.remote.port(), Some(53_000));
         assert_eq!(socket.memory, None);
         assert_eq!(socket.tcp_info, None);
         assert_eq!(socket.congestion_algorithm, None);
@@ -2495,6 +2563,61 @@ mod tests {
     }
 
     #[test]
+    fn sctp_associations_share_socket_identity_but_are_distinct_records() {
+        let query = Query {
+            family: 2,
+            protocol: 132,
+        };
+        let payload = diag_payload(query, 1);
+        let mut data = message(
+            SOCK_DIAG_BY_FAMILY,
+            NLM_F_MULTI,
+            SEQUENCE,
+            PORT_ID,
+            &payload,
+        );
+        data.extend(message(SOCK_DIAG_BY_FAMILY, 0, SEQUENCE, PORT_ID, &payload));
+        data.extend(done_message(0));
+        let rows = parse_table_fixture(query, &data).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].identity, rows[1].identity);
+        assert_ne!(rows[0].details.association, rows[1].details.association);
+        let mut duplicate = message(SOCK_DIAG_BY_FAMILY, 0, SEQUENCE, PORT_ID, &payload);
+        duplicate.extend(message(SOCK_DIAG_BY_FAMILY, 0, SEQUENCE, PORT_ID, &payload));
+        duplicate.extend(done_message(0));
+        assert_eq!(
+            parse_table_fixture(query, &duplicate).unwrap_err().kind(),
+            CollectErrorKind::Malformed
+        );
+    }
+
+    #[test]
+    fn netlink_multicast_subscribers_are_deduplicated() {
+        let query = Query {
+            family: 16,
+            protocol: 255,
+        };
+        let mut payload = vec![0; 28];
+        payload[0] = 16;
+        payload[1] = 3;
+        payload[2] = 15;
+        put_u32(&mut payload[4..8], 12345);
+        put_u32(&mut payload[16..20], 99);
+        put_u32(&mut payload[20..24], 42);
+        let row = message(
+            SOCK_DIAG_BY_FAMILY,
+            NLM_F_MULTI,
+            SEQUENCE,
+            PORT_ID,
+            &payload,
+        );
+        let mut data = row.clone();
+        data.extend(row);
+        data.extend(done_message(0));
+        assert_eq!(parse_table_fixture(query, &data).unwrap().len(), 1);
+    }
+
+    #[test]
     fn table_limit_reports_all_observed_sockets_and_returns_a_bounded_prefix() {
         let mut parser = DumpParser::new_table(Query::IPV4_TCP);
         parser.sample_limit = 1;
@@ -2741,7 +2864,7 @@ mod tests {
         let table = collect_table_current_namespace();
 
         assert_eq!(snapshot.queries.len(), QUERY_COUNT);
-        assert_eq!(table.queries.len(), QUERY_COUNT);
+        assert_eq!(table.queries.len(), families::table_queries().len());
         for query in [Query::IPV4_TCP, Query::IPV4_UDP] {
             let result = snapshot
                 .queries
@@ -2906,7 +3029,7 @@ mod tests {
         SocketDropSample {
             identity: SocketIdentity {
                 family: libc::AF_INET as u8,
-                protocol: libc::IPPROTO_UDP as u8,
+                protocol: libc::IPPROTO_UDP as u16,
                 cookie: [seed, seed.wrapping_mul(17)],
                 inode: seed.wrapping_add(100),
             },

@@ -1691,6 +1691,10 @@ impl App {
             .and_then(|key| self.socket_order.position(key))
         {
             self.selected_socket_ordinal = Some(position);
+            self.selected_socket_key = self
+                .socket_order
+                .socket(position)
+                .map(|socket| socket.row_key().clone());
             return;
         }
         let position = self

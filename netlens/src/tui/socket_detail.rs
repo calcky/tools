@@ -82,11 +82,9 @@ fn detail_groups(
     push_wrapped(
         &mut lines,
         &format!(
-            "{}{} SOCKET DETAIL [{status}]  {}  OWNER {}",
-            socket.protocol().label().to_uppercase(),
-            socket.family().label(),
+            "{} SOCKET DETAIL [{status}]  {}",
+            socket.protocol_label().to_uppercase(),
             socket.state(),
-            format_owner(socket),
         ),
         width,
         Style::default()
@@ -108,6 +106,35 @@ fn detail_groups(
     push_metric(
         &mut lines,
         if observed_latest {
+            "LOCAL PROCESS"
+        } else {
+            "LAST PROCESS"
+        },
+        Some(format_owner(socket)),
+        width,
+        metrics_mode,
+    );
+    if observed_latest
+        && matches!(
+            socket.protocol(),
+            SocketProtocol::Tcp | SocketProtocol::Unix
+        )
+        && !socket.is_tcp_listener()
+    {
+        push_metric(
+            &mut lines,
+            "PEER PROCESS",
+            Some(detail.peer().map_or_else(
+                || "not observed in this namespace".to_owned(),
+                |peer| format!("{} (local peer)", format_owner(peer)),
+            )),
+            width,
+            metrics_mode,
+        );
+    }
+    push_metric(
+        &mut lines,
+        if observed_latest {
             "LOCAL / REMOTE"
         } else {
             "LAST ENDPOINTS"
@@ -115,7 +142,11 @@ fn detail_groups(
         Some(format!(
             "{} -> {}",
             socket::format_endpoint(socket.local()),
-            socket::format_endpoint(socket.remote())
+            socket::format_endpoint(if socket.protocol() == SocketProtocol::Unix {
+                detail.peer().map_or(socket.remote(), |peer| peer.local())
+            } else {
+                socket.remote()
+            })
         )),
         width,
         metrics_mode,
@@ -135,12 +166,71 @@ fn detail_groups(
         width,
         metrics_mode,
     );
+    if observed_latest && socket.protocol() == SocketProtocol::Tcp {
+        if let Some(peer) = detail.peer() {
+            for (label, endpoint) in [("LOCAL TCP", socket), ("PEER TCP", peer)] {
+                let tcp = endpoint.tcp();
+                push_metric(
+                    &mut lines,
+                    label,
+                    Some(format!(
+                        "{}  RX-Q {}  TX-Q {}  RTT {}  MSS {}  CC {}",
+                        endpoint.state(),
+                        format_bytes(u64::from(endpoint.receive_queue())),
+                        format_bytes(u64::from(endpoint.send_queue())),
+                        tcp.map_or_else(
+                            || "n/a".into(),
+                            |tcp| format_micros(u64::from(tcp.rtt_micros))
+                        ),
+                        tcp.map_or_else(
+                            || "n/a".into(),
+                            |tcp| format_bytes(u64::from(tcp.send_mss_bytes))
+                        ),
+                        endpoint.congestion_algorithm().unwrap_or("n/a"),
+                    )),
+                    width,
+                    metrics_mode,
+                );
+            }
+        }
+    }
     groups.push(DetailGroup::take("IDENTITY", &mut lines));
     if !observed_latest {
         return groups;
     }
 
     let width = layout.column_inner_width();
+    if !matches!(socket.protocol(), SocketProtocol::Tcp | SocketProtocol::Udp) {
+        push_metric(
+            &mut lines,
+            "RECV-Q",
+            Some(socket::format_queue(socket, socket.receive_queue(), false)),
+            width,
+            metrics_mode,
+        );
+        push_metric(
+            &mut lines,
+            "SEND-Q",
+            Some(socket::format_queue(socket, socket.send_queue(), true)),
+            width,
+            metrics_mode,
+        );
+        if let Some(memory) = socket.memory() {
+            push_memory_windows(&mut lines, memory, width, metrics_mode);
+            push_metric(
+                &mut lines,
+                "SOCKET DROPS",
+                socket.drops().map(|v| v.to_string()),
+                width,
+                metrics_mode,
+            );
+        }
+        for (label, value) in &socket.details().fields {
+            push_metric(&mut lines, label, Some(value.clone()), width, metrics_mode);
+        }
+        groups.push(DetailGroup::take("SOCKET DIAGNOSTICS", &mut lines));
+        return groups;
+    }
     if socket.protocol() == SocketProtocol::Tcp && !socket.is_tcp_listener() {
         push_limit_basis(&mut lines, socket.tcp(), width);
         groups.push(DetailGroup::take("LIMIT BASIS", &mut lines));
@@ -737,7 +827,11 @@ fn format_scope(socket: &InetSocketSnapshot, stable_identity: bool) -> String {
     };
     format!(
         "uid {}  {device}{expires}  identity {}",
-        socket.uid(),
+        if socket.details().uid_unavailable {
+            "n/a".to_owned()
+        } else {
+            socket.uid().to_string()
+        },
         if stable_identity {
             "stable"
         } else {
@@ -748,7 +842,7 @@ fn format_scope(socket: &InetSocketSnapshot, stable_identity: bool) -> String {
 
 fn format_owner(socket: &InetSocketSnapshot) -> String {
     let Some(owner) = socket.owners().first() else {
-        return format!("uid {}", socket.uid());
+        return format!("{} (uid {})", socket.owner_status(), socket.uid());
     };
     let owner = owner.command().map_or_else(
         || owner.pid().to_string(),
@@ -1053,6 +1147,37 @@ mod tests {
             !rendered.chars().any(|value| "▁▂▃▄▅▆▇█".contains(value)),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn local_connection_detail_shows_both_processes_at_all_supported_widths() {
+        let snapshot = crate::monitor::socket_table::synthetic_local_socket_pair();
+        for index in [0, 1] {
+            let detail =
+                SocketDetailState::start(&snapshot, snapshot.sockets()[index].row_key().clone())
+                    .unwrap();
+            for width in [60, 80, 120, 180] {
+                let text = render_text(&detail, width, DetailMetricsMode::WithData);
+                for value in [
+                    "LOCAL PROCESS",
+                    "PEER PROCESS",
+                    "1234/client-worker",
+                    "5678/server-worker",
+                    "local peer",
+                    "LOCAL TCP",
+                    "PEER TCP",
+                ] {
+                    assert!(text.contains(value), "{value}: {text}");
+                }
+                assert!(detail_lines(&detail, DetailMetricsMode::WithData, width)
+                    .iter()
+                    .all(|line| line.width() <= usize::from(width)));
+            }
+        }
+        let text = render_text(&listener_detail(), 120, DetailMetricsMode::WithData);
+        assert!(!text.contains("PEER PROCESS"));
+        let text = render_text(&tcp_detail(), 120, DetailMetricsMode::WithData);
+        assert!(text.contains("not observed in this namespace"));
     }
 
     #[test]

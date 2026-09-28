@@ -417,10 +417,7 @@ fn render_body(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 app.selected_socket_key(),
                 app.row_offset(),
             ),
-            None => frame.render_widget(
-                Paragraph::new("Collecting the INET TCP/UDP socket table..."),
-                area,
-            ),
+            None => frame.render_widget(Paragraph::new("Collecting socket tables..."), area),
         }
         return;
     }
@@ -884,7 +881,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
         } else {
             lines.push(Line::styled(
                 if app.is_socket_table() {
-                    " host IP | net CIDR | port N | and/or/not | src/dst: local/remote"
+                    " proc NAME | host IP | net CIDR | port N | and/or/not | src/dst: local/remote"
                 } else {
                     " host IP | net CIDR | port N | and/or/not | src/dst: original"
                 },

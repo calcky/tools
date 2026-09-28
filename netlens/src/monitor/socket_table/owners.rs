@@ -13,9 +13,11 @@ use super::{project_process_coverage, SocketProcessCoverage};
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const NEW_SOCKET_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_CACHE_AGE: Duration = Duration::from_secs(20);
+const MAX_RECENT_TCP_PIDS: usize = 32;
 
 pub(super) struct OwnerSnapshot {
     owners: BTreeMap<SocketIdentity, Vec<SocketProcess>>,
+    scan_coverage: SocketProcessCoverage,
     pub(super) coverage: SocketProcessCoverage,
     pub(super) age: Option<Duration>,
     pub(super) refreshing: bool,
@@ -28,10 +30,24 @@ impl OwnerSnapshot {
         self.owners.get(identity).map_or(&[], Vec::as_slice)
     }
 
+    pub(super) fn coverage_for(&self, identity: &SocketIdentity) -> SocketProcessCoverage {
+        if self.owners.contains_key(identity)
+            || matches!(
+                self.scan_coverage,
+                SocketProcessCoverage::PermissionDenied | SocketProcessCoverage::Unavailable
+            )
+        {
+            self.scan_coverage
+        } else {
+            SocketProcessCoverage::Pending
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn empty() -> Self {
         Self {
             owners: BTreeMap::new(),
+            scan_coverage: SocketProcessCoverage::Complete,
             coverage: SocketProcessCoverage::Complete,
             age: None,
             refreshing: false,
@@ -53,6 +69,8 @@ struct ScanResult {
 
 struct OwnerCache {
     entries: BTreeMap<SocketIdentity, Vec<SocketProcess>>,
+    known_pids: Vec<u32>,
+    recent_tcp_pids: Vec<u32>,
     observed_at: Option<Instant>,
     last_request: Option<Instant>,
     coverage: SocketProcessCoverage,
@@ -64,6 +82,8 @@ impl Default for OwnerCache {
     fn default() -> Self {
         Self {
             entries: BTreeMap::new(),
+            known_pids: Vec::new(),
+            recent_tcp_pids: Vec::new(),
             observed_at: None,
             last_request: None,
             coverage: SocketProcessCoverage::Pending,
@@ -74,7 +94,38 @@ impl Default for OwnerCache {
 }
 
 impl OwnerCache {
+    fn remember_tcp_pids(&mut self, pids: impl IntoIterator<Item = u32>) {
+        let mut seen = BTreeSet::new();
+        self.recent_tcp_pids = pids
+            .into_iter()
+            .chain(self.recent_tcp_pids.iter().copied())
+            .filter(|pid| seen.insert(*pid))
+            .take(MAX_RECENT_TCP_PIDS)
+            .collect();
+    }
+
     fn accept(&mut self, result: ScanResult, current: &BTreeSet<SocketIdentity>) {
+        // A full scan can land between two connections of the same process.
+        // Keep bounded prior hints; attribution still requires a fresh matching FD.
+        let mut seen = result.scan.owner_pids();
+        let mut known_pids: Vec<_> = seen.iter().copied().take(256).collect();
+        for &pid in result.scan.socket_pids().iter().chain(&self.known_pids) {
+            if known_pids.len() == 256 {
+                break;
+            }
+            if seen.insert(pid) {
+                known_pids.push(pid);
+            }
+        }
+        self.known_pids = known_pids;
+        self.remember_tcp_pids(
+            result
+                .request
+                .targets
+                .iter()
+                .filter(|id| id.is_tcp())
+                .flat_map(|id| result.scan.owners(id.inode()).iter().map(|owner| owner.pid)),
+        );
         // A cookie must survive both socket dumps around the asynchronous scan.
         self.entries = result
             .request
@@ -140,6 +191,7 @@ impl OwnerCache {
         };
         OwnerSnapshot {
             owners: self.entries.clone(),
+            scan_coverage: self.coverage,
             coverage,
             age: self.observed_at.map(|at| now.saturating_duration_since(at)),
             refreshing,
@@ -223,6 +275,59 @@ impl OwnerService {
         self.cache.reconcile(&current, now, |owner, inode| {
             socket_process::owner_is_current(proc_root, owner, inode)
         });
+        let unresolved: BTreeSet<_> = current
+            .iter()
+            .filter(|id| self.cache.entries.get(*id).is_none_or(Vec::is_empty))
+            .cloned()
+            .collect();
+        if !unresolved.is_empty() && !self.cache.known_pids.is_empty() {
+            let inodes = unresolved.iter().map(SocketIdentity::inode).collect();
+            let priority = &self.cache.recent_tcp_pids;
+            let candidates: Vec<_> = priority
+                .iter()
+                .chain(
+                    self.cache
+                        .known_pids
+                        .iter()
+                        .filter(|pid| !priority.contains(pid)),
+                )
+                .copied()
+                .take(64)
+                .collect();
+            let priority_count = priority.len().min(candidates.len());
+            if let Some(scan) = socket_process::scan_known_socket_processes(
+                proc_root,
+                &inodes,
+                &candidates,
+                &self.cancelled,
+            ) {
+                // Partial fast scans only contribute positive, freshly validated matches.
+                let mut tcp_pids = BTreeSet::new();
+                for identity in unresolved {
+                    let owners: Vec<_> = scan
+                        .owners(identity.inode())
+                        .iter()
+                        .filter(|owner| {
+                            socket_process::owner_is_current(proc_root, owner, identity.inode())
+                        })
+                        .cloned()
+                        .collect();
+                    if !owners.is_empty() {
+                        if identity.is_tcp() {
+                            tcp_pids.extend(owners.iter().map(|owner| owner.pid));
+                        }
+                        self.cache.entries.insert(identity, owners);
+                    }
+                }
+                self.cache.remember_tcp_pids(tcp_pids);
+                let rotation = scan
+                    .visited_processes()
+                    .saturating_sub(priority_count)
+                    .max(1)
+                    .min(self.cache.known_pids.len());
+                self.cache.known_pids.rotate_left(rotation);
+            }
+        }
         if !self.in_flight && self.cache.due(&current, now) {
             if let Some(requests) = &self.requests {
                 let request = Request {
@@ -279,6 +384,190 @@ mod tests {
         )
         .unwrap();
         symlink(format!("socket:[{inode}]"), root.join("12/fd/3")).unwrap();
+    }
+
+    #[test]
+    fn recent_tcp_client_is_checked_before_background_pid_rotation() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let old = identity(1);
+        let new = identity(2);
+        add_owner(root.path(), old.inode());
+        let targets = BTreeSet::from([old]);
+        let mut service = OwnerService::spawn(|_, _| Some(SocketProcessScan::empty())).unwrap();
+        service
+            .cache
+            .accept(result(root.path(), targets.clone(), now), &targets);
+        service.cache.last_request = Some(now);
+        service.cache.known_pids = (100..164).chain([12]).collect();
+        fs::remove_file(root.path().join("12/fd/3")).unwrap();
+        symlink(
+            format!("socket:[{}]", new.inode()),
+            root.path().join("12/fd/4"),
+        )
+        .unwrap();
+        let snapshot = service.snapshot(
+            BTreeSet::from([new.clone()]),
+            root.path(),
+            now + Duration::from_millis(250),
+        );
+        assert_eq!(
+            snapshot.owners(&new).first().map(|owner| owner.pid),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn scanning_after_port_change_still_discovers_client_pid() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let old = identity(1);
+        let new = identity(2);
+        // The async scan requested the old socket, but the client has replaced it.
+        add_owner(root.path(), new.inode());
+        let mut service = OwnerService::spawn(|_, _| Some(SocketProcessScan::empty())).unwrap();
+        let targets = BTreeSet::from([new.clone()]);
+        service
+            .cache
+            .accept(result(root.path(), BTreeSet::from([old]), now), &targets);
+        service.cache.last_request = Some(now);
+        let snapshot = service.snapshot(targets, root.path(), now + Duration::from_millis(250));
+        assert_eq!(
+            snapshot.owners(&new).first().map(|owner| owner.pid),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn negative_full_scan_does_not_block_positive_fast_match() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let listener = identity(1);
+        let new = identity(2);
+        add_owner(root.path(), listener.inode());
+        let targets = BTreeSet::from([listener, new.clone()]);
+        let mut service = OwnerService::spawn(|_, _| Some(SocketProcessScan::empty())).unwrap();
+        service
+            .cache
+            .accept(result(root.path(), targets.clone(), now), &targets);
+        service.cache.last_request = Some(now);
+        symlink(
+            format!("socket:[{}]", new.inode()),
+            root.path().join("12/fd/4"),
+        )
+        .unwrap();
+        let snapshot = service.snapshot(targets, root.path(), now + Duration::from_millis(250));
+        assert_eq!(
+            snapshot.owners(&new).first().map(|owner| owner.pid),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn scan_between_short_connections_preserves_process_hint() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let old = identity(1);
+        let new = identity(2);
+        add_owner(root.path(), old.inode());
+        let targets = BTreeSet::from([old.clone()]);
+        let mut service = OwnerService::spawn(|_, _| Some(SocketProcessScan::empty())).unwrap();
+        service
+            .cache
+            .accept(result(root.path(), targets.clone(), now), &targets);
+        service.cache.last_request = Some(now);
+        fs::remove_file(root.path().join("12/fd/3")).unwrap();
+        service
+            .cache
+            .accept(result(root.path(), targets, now), &BTreeSet::new());
+        symlink(
+            format!("socket:[{}]", new.inode()),
+            root.path().join("12/fd/4"),
+        )
+        .unwrap();
+        let snapshot = service.snapshot(
+            BTreeSet::from([new.clone()]),
+            root.path(),
+            now + Duration::from_millis(250),
+        );
+        assert_eq!(
+            snapshot.owners(&new).first().map(|owner| owner.pid),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn known_process_resolves_a_new_fd_before_the_full_scan_interval() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let listener = identity(1);
+        let connection = identity(2);
+        add_owner(root.path(), listener.inode());
+        let old_targets = BTreeSet::from([listener.clone()]);
+        let mut service = OwnerService::spawn(|_, _| Some(SocketProcessScan::empty())).unwrap();
+        service
+            .cache
+            .accept(result(root.path(), old_targets.clone(), now), &old_targets);
+        service.cache.last_request = Some(now);
+        let pending = service.snapshot(
+            BTreeSet::from([listener.clone(), connection.clone()]),
+            root.path(),
+            now + Duration::from_millis(100),
+        );
+        assert!(
+            pending.owners(&connection).is_empty(),
+            "listener ownership must not be guessed for a new connection"
+        );
+        symlink(
+            format!("socket:[{}]", connection.inode()),
+            root.path().join("12/fd/4"),
+        )
+        .unwrap();
+        let snapshot = service.snapshot(
+            BTreeSet::from([listener, connection.clone()]),
+            root.path(),
+            now + Duration::from_millis(250),
+        );
+        assert_eq!(
+            snapshot.owners(&connection).first().map(|owner| owner.pid),
+            Some(12)
+        );
+        assert!(
+            !snapshot.refreshing,
+            "known PID lookup must not force a full scan"
+        );
+    }
+
+    #[test]
+    fn new_socket_status_is_pending_even_when_previous_scan_was_restricted() {
+        let root = TempDir::new().unwrap();
+        let now = Instant::now();
+        let targets = BTreeSet::from([identity(1)]);
+        let mut cache = OwnerCache::default();
+        cache.accept(result(root.path(), targets.clone(), now), &targets);
+        cache.coverage = SocketProcessCoverage::Partial {
+            permission_denied_processes: 3,
+            io_errors: 0,
+            truncated: false,
+        };
+        let expanded = BTreeSet::from([identity(1), identity(2)]);
+        let snapshot = cache.snapshot(&expanded, now, false);
+        assert_eq!(snapshot.coverage_for(&identity(1)), cache.coverage);
+        assert_eq!(
+            snapshot.coverage_for(&identity(2)),
+            SocketProcessCoverage::Pending
+        );
+        cache.coverage = SocketProcessCoverage::Complete;
+        let snapshot = cache.snapshot(&expanded, now, true);
+        assert_eq!(snapshot.coverage, SocketProcessCoverage::Pending);
+        assert_eq!(
+            snapshot.coverage_for(&identity(1)),
+            SocketProcessCoverage::Complete
+        );
+        assert_eq!(
+            snapshot.coverage_for(&identity(2)),
+            SocketProcessCoverage::Pending
+        );
     }
 
     #[test]
