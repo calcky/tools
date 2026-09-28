@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>flowgen | Test report</title>
+<style>
+:root {color-scheme:light;--ink:#25343a;--muted:#708087;--line:#e1e8e9;--accent:#137d6c;--bad:#c23e5a;--warn:#ac771f;--paper:#fff;--surface:#f3f7f7;--header:#252e31;--blue:#2a73a4;--amber:#ac771f;--numeric:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
+* {box-sizing:border-box} [hidden] {display:none!important} body {margin:0;background:var(--paper);color:var(--ink);font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:0;-webkit-font-smoothing:antialiased}
+header {background:var(--header);color:#f0f5f4;border-top:2px solid #5ea993;border-bottom:1px solid #354247} .inner,main {max-width:1600px;margin:auto;padding:0 28px} main {padding-top:0;padding-bottom:20px}
+.heading {display:flex;align-items:center;gap:18px;min-height:68px;flex-wrap:wrap;padding:12px 0} h1 {margin:0;font-size:23px;white-space:nowrap} h1 span {font-weight:400;color:var(--muted);font-size:12px;margin-left:10px}
+.target {font:13px ui-monospace,SFMono-Regular,Consolas,monospace;border-left:1px solid var(--line);padding-left:18px;overflow-wrap:anywhere}
+.controls {display:flex;align-items:center;gap:10px;margin-left:auto} select,button {font:inherit;background:white;border:1px solid var(--line);border-radius:4px;padding:5px 9px;color:var(--ink)} button {cursor:pointer} button:hover {border-color:var(--accent)} select {max-width:250px;min-width:0}
+button:focus-visible,select:focus-visible {outline:2px solid #2074ac;outline-offset:3px} button:disabled {opacity:.45;cursor:default} .icon-button {width:30px;height:30px;padding:0;display:grid;place-items:center;flex:none} .icon-button svg {width:16px;height:16px}
+.status {font-size:11px;font-weight:700;padding:2px 7px;background:#e9f5ef;color:var(--accent);border:1px solid #c7e4d7;border-radius:3px;white-space:nowrap} .status.bad {background:#fff0f2;color:var(--bad);border-color:#edbdc5}
+.meta {display:flex;gap:5px 24px;flex-wrap:wrap;min-height:39px;padding:7px 0;border-top:1px solid #eef1f2;color:var(--muted);font-size:12px} .meta b {color:var(--ink);font-weight:600;margin-left:5px;overflow-wrap:anywhere}
+.metrics {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;padding:18px 0;margin:0 0 18px;border-bottom:1px solid var(--line)} .metrics>div {border-left:1px solid var(--line);padding-left:18px;min-width:0} .metrics>div:first-child {border:0;padding-left:0} .metrics dt {color:var(--muted);font-size:11px} .metrics dd {margin:3px 0 0;font-size:25px;line-height:1.3;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere} .metrics small {font-size:12px;font-weight:400;color:var(--muted);margin-left:4px}.metrics .tail dd {color:var(--accent)} .metrics .alert dd {color:var(--bad)}
+.notice {background:#fff8ea;border-left:3px solid #c98a19;padding:10px 14px;margin:16px 0;color:#714e0d}
+section {padding:16px 0;border-bottom:1px solid var(--line);min-width:0} h2 {font-size:14px;margin:0;font-weight:650} .section-head {display:flex;justify-content:space-between;gap:12px;align-items:baseline;min-height:26px;margin-bottom:3px} .subtitle {font-size:11px;color:var(--muted);margin:4px 0 10px} .section-head .subtitle {margin:0;text-align:right} .chart {width:100%;height:200px;min-width:0} .chart.rtt,.chart.sample-quality {height:285px} .chart.navigator {height:50px;margin:8px 0}
+.matrix {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 30px} .matrix>section {padding:0 0 12px} .matrix>section:nth-child(even) {border-left:1px solid var(--line);padding-left:26px}
+.split,.tables {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 28px} .split>div,.tables>div {min-width:0} .table-wrap {overflow:auto} table {border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums} th,td {border-bottom:1px solid var(--line);padding:7px 11px;text-align:right;white-space:nowrap} th {background:var(--surface);font-weight:600;font-size:11px;color:var(--muted)} th:first-child,td:first-child {text-align:left} tr.emphasis td {font-weight:650} .bad-value {color:var(--bad);font-weight:650} .warning-value {color:var(--warn);font-weight:650} .empty {color:var(--muted);padding:12px;border:1px solid var(--line)} .tables h2,.split h2 {margin-bottom:8px}
+.tabs {display:flex;gap:28px;flex-wrap:wrap;border-top:1px solid #dce6e6;margin-top:14px;padding-top:8px} .tabs button {border:0;border-radius:0;border-bottom:3px solid transparent;background:none;padding:9px 0;color:#6c7d84;font-size:12px;font-weight:500} .tabs button[aria-selected="true"] {border-bottom-color:var(--accent);font-weight:650;color:var(--accent)} .panel {padding-top:12px} footer {padding:16px 0;color:var(--muted);font-size:11px} #no-series {padding:20px 0;color:var(--muted)} #render-error {white-space:pre-wrap;color:var(--bad)}
+header h1 {font-weight:700} header h1 span {color:#a8bbb9;font-weight:450} header .target {color:#dce9e5;border-color:#46575b;font-family:var(--numeric)}
+header .meta {border-color:#3a484c;color:#9eb2b7} header .meta b {color:#e8efee;font-weight:550} header select,header .icon-button {color-scheme:dark;background:#303b3f;border-color:#4a5a5f;color:#e7efee;transition:background-color .15s,border-color .15s} header .icon-button:hover {background:#3e5055;border-color:#72b8a5} header .status {background:#1f4338;border-color:#396d58;color:#8ce0ba} header .status.bad {background:#4c2631;border-color:#784453;color:#ffbdcb}
+.metrics {background:#f5f8f8;border-bottom-color:#dce5e6;padding-top:19px;padding-bottom:19px} .metrics>div {border-left-color:#dce5e6;display:flex;flex-direction:column} .metrics dt {font-weight:550} .metrics dd {font-family:"Segoe UI",system-ui,sans-serif;font-size:27px;font-weight:650;margin-top:auto;padding-top:3px} .metrics small {font-family:system-ui,sans-serif;font-size:11px;font-weight:450;margin-left:5px} .metrics>div:first-child dd {color:var(--blue)} .metrics>div:nth-child(2) dd {color:var(--amber)} .metrics .tail dd {color:var(--bad)}
+.metrics small:empty {display:none}
+.scope-band,.chart-toolbar {display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 0;color:var(--muted);font-size:11px} .scope-band {padding-bottom:0} .scope-band strong {color:var(--ink);font-weight:600} .chart-toolbar {border-bottom:1px solid var(--line);margin-bottom:16px;padding-top:0} #chart-range {font-family:var(--numeric);overflow-wrap:anywhere} .export-actions {display:flex;align-items:center;gap:8px} .chart-actions {display:flex;align-items:center;gap:8px;flex:none} .chart-actions .icon-button {width:25px;height:25px;background:none;border-color:transparent;color:var(--muted)} .chart-actions .icon-button:hover {border-color:var(--line);color:var(--accent)}
+.anomaly-summary {display:flex;align-items:center;gap:10px 20px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 12px;margin-bottom:16px;font-size:12px} .anomaly-summary>strong {font-size:11px;font-weight:600;color:var(--muted)} .anomaly-summary .icon-button {margin-left:auto} .anomaly-items {display:flex;gap:5px 20px;flex-wrap:wrap;margin:0;flex:1;min-width:0} .anomaly-items>div {display:flex;align-items:baseline;gap:6px;min-width:0;flex-wrap:wrap} .anomaly-items dt {color:var(--muted);font-size:11px} .anomaly-items dd {margin:0;font-family:var(--numeric);font-size:12px;font-weight:600;overflow-wrap:anywhere} .recording-complete {color:var(--accent)} #export-status:not(:empty) {padding:8px 0;color:var(--bad);overflow-wrap:anywhere}
+.attainment-band {padding:0 0 16px;margin-bottom:16px;border-bottom:1px solid var(--line)} .attainment-band .section-head {align-items:center} .attainment-band td {font-family:var(--numeric)} .attainment-band td:first-child,.attainment-band td:last-child {font-family:inherit} .attainment-band td:last-child {text-align:left;color:var(--muted);font-size:11px;white-space:normal;min-width:150px} .attainment-band th:last-child {text-align:left} .attained {color:var(--accent);font-weight:650}
+.section-head h2 {position:relative;padding-left:12px;font-weight:650}.section-head h2::before {content:"";position:absolute;left:0;top:5px;width:3px;height:11px;background:var(--accent)} .matrix>section:first-child .section-head h2::before {background:var(--blue)} .matrix>section:nth-child(2) .section-head h2::before {background:var(--bad)} .matrix>section:nth-child(3) .section-head h2::before {background:var(--amber)} .section-head .subtitle {font-family:var(--numeric);font-size:10px}
+th {background:#f0f5f4;color:#536b71;border-top:1px solid #dce6e2;border-bottom-color:#ccdcd6} td {font-family:var(--numeric);color:#384950;padding:9px 11px} td:first-child {font-family:system-ui,sans-serif;color:var(--ink);font-weight:550} tbody tr:nth-child(even) {background:#fafbfc} tbody tr:hover {background:#edf5f3} th,td {transition:background-color .12s} .table-wrap {scrollbar-color:#b9ccc6 #f5f8f7} .bad-value {color:var(--bad)} .warning-value {color:var(--warn)}
+.tabs button {transition:color .15s,border-color .15s} .tabs button:hover {color:var(--accent)} .panel>.subtitle {color:#79898f} footer {border-top:1px solid var(--line);margin-top:18px;line-height:1.7;color:#7c8b91}
+@media(prefers-reduced-motion:reduce) {header select,header .icon-button,.tabs button,th,td {transition:none}}
+@media(max-width:1050px) {.inner,main {padding-left:20px;padding-right:20px}.metrics dd {font-size:22px}.metrics small {font-size:10px;margin-left:3px}.metrics>div {padding-left:10px}.target {font-size:12px}.heading {gap:12px}h1 span {display:none}.matrix {gap:16px}.matrix>section:nth-child(even) {padding-left:16px}}
+@media(max-width:760px) {.inner,main {padding-left:14px;padding-right:14px}.heading {gap:10px}.target {order:3;width:100%;padding:0;border:0}.controls {gap:7px}select {max-width:160px}.meta {gap:5px 15px}.metrics {grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 6px;padding:14px 0}.metrics>div:nth-child(4) {border:0;padding-left:0}.metrics dt {min-height:30px;line-height:1.35}.metrics dd {font-size:22px}.matrix,.split,.tables {grid-template-columns:minmax(0,1fr)}.matrix>section:nth-child(even) {padding-left:0;border-left:0}.chart.rtt,.chart.sample-quality {height:265px}.tabs {gap:18px}}
+@media(max-width:760px) {.anomaly-summary {display:grid;grid-template-columns:1fr 30px;gap:8px 12px}.anomaly-summary>strong {grid-column:1;grid-row:1;align-self:center}.anomaly-summary>.icon-button {grid-column:2;grid-row:1}.anomaly-items {grid-column:1 / -1;grid-row:2;gap:6px 16px}}
+@media(max-width:380px) {select {max-width:125px}.metrics dd {font-size:17px}}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <div class="heading"><h1>flowgen<span>Test report</span></h1><div id="target" class="target"></div><div class="controls"><select id="run" aria-label="Test run"></select><span id="status" class="status"></span><button id="reset" class="icon-button" type="button" aria-label="Reset time range" title="Reset time range">
+  <!-- Lucide rotate-ccw, ISC: Copyright (c) 2026 Lucide Icons and Contributors.
+  Permission to use, copy, modify, and/or distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. -->
+  <svg class="lucide lucide-rotate-ccw" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+  </button></div></div>
+  <div id="metadata" class="meta"></div>
+</div></header>
+<main>
+  <div id="render-error" role="alert"></div>
+  <div id="incomplete" class="notice" hidden>INCOMPLETE: recorded samples are partial. Missing records are not network loss; curves show observed data only.</div>
+  <div class="scope-band"><strong id="statistics-scope">Full-run statistics</strong><div class="export-actions"><span>All phases</span><button id="export-summary" class="icon-button" type="button" aria-label="Download full-run summary CSV" title="Download full-run summary CSV"></button></div></div>
+  <dl id="metrics" class="metrics"></dl>
+  <aside class="anomaly-summary" aria-label="Full-run anomalies"><strong>Full-run anomalies</strong><dl id="anomaly-summary" class="anomaly-items"></dl><button id="open-diagnostics" class="icon-button" type="button" aria-label="Open diagnostics" title="Open diagnostics"></button></aside>
+  <div id="export-status" role="status" aria-live="polite"></div>
+  <section class="attainment-band" aria-label="Load-phase target attainment"><div class="section-head"><h2>Target attainment</h2><div class="export-actions"><span id="attainment-scope" class="subtitle">LOAD only</span><button id="export-attainment" class="icon-button" type="button" aria-label="Download target attainment CSV" title="Download target attainment CSV"></button></div></div><div id="attainment" class="table-wrap"></div></section>
+  <div id="charts"><div class="chart-toolbar"><span id="chart-range"></span><button id="export-timeline" class="icon-button" type="button" aria-label="Download full-run time-series CSV" title="Download full-run time-series CSV"></button></div><div class="matrix">
+    <section><div class="section-head"><h2>Round-trip latency</h2><p id="resolution" class="subtitle"></p></div><div id="rtt" class="chart rtt"></div></section>
+    <section><div class="section-head"><h2>Sample coverage &amp; request timeouts</h2><span class="subtitle">samples / %</span></div><div id="sample-quality" class="chart sample-quality"></div></section>
+    <section><div class="section-head"><h2>Traffic</h2><span class="subtitle">msg/s / Mbit/s</span></div><div id="traffic" class="chart"></div></section>
+    <section><div class="section-head"><h2>Sessions &amp; failures</h2><span class="subtitle">sessions / events/s</span></div><div id="sessions" class="chart"></div></section>
+  </div><div id="range" class="chart navigator"></div></div>
+  <div id="no-series" hidden>No time-series data: summary recording retains aggregate statistics only.</div>
+  <div class="tabs" role="tablist" aria-label="Report details">
+    <button id="tab-latency" role="tab" aria-selected="true" aria-controls="panel-latency" data-tab="latency">Latency</button>
+    <button id="tab-outcomes" role="tab" aria-selected="false" aria-controls="panel-outcomes" data-tab="outcomes" tabindex="-1">Request outcomes</button>
+    <button id="tab-sessions" role="tab" aria-selected="false" aria-controls="panel-sessions" data-tab="sessions" tabindex="-1">Sessions</button>
+    <button id="tab-diagnostics" role="tab" aria-selected="false" aria-controls="panel-diagnostics" data-tab="diagnostics" tabindex="-1">Diagnostics</button>
+    <button id="tab-recording" role="tab" aria-selected="false" aria-controls="panel-recording" data-tab="recording" tabindex="-1">Recording</button>
+  </div>
+  <div id="panel-latency" class="panel" role="tabpanel" aria-labelledby="tab-latency"><p class="subtitle">All valid samples / milliseconds / HDR percentiles, three significant digits</p><div id="latency" class="table-wrap"></div></div>
+  <div id="panel-outcomes" class="panel" role="tabpanel" aria-labelledby="tab-outcomes" hidden><div class="tables"><div><h2>Requests &amp; outcomes</h2><div id="outcomes" class="table-wrap"></div></div><div><h2>Timeout accounting</h2><div id="timeouts" class="table-wrap"></div></div></div><section id="forward-section" hidden><h2>UDP forward delivery reconciliation</h2><div id="forward" class="table-wrap"></div></section></div>
+  <div id="panel-sessions" class="panel" role="tabpanel" aria-labelledby="tab-sessions" hidden><div class="split"><div><h2>Sessions &amp; scheduling</h2><div id="scheduling" class="table-wrap"></div></div><div><h2>Slowest sessions / global top 3</h2><div id="worst" class="table-wrap"></div></div></div></div>
+  <div id="panel-diagnostics" class="panel" role="tabpanel" aria-labelledby="tab-diagnostics" hidden><section id="anomaly-section"><h2>Timeouts &amp; anomalies</h2><p id="anomaly-note" class="subtitle"></p><div id="anomalies" class="chart"></div></section><section><h2>Error diagnostics</h2><div id="errors" class="table-wrap"></div></section></div>
+  <div id="panel-recording" class="panel" role="tabpanel" aria-labelledby="tab-recording" hidden><div class="tables"><div><h2>Recording quality</h2><div id="quality" class="table-wrap"></div></div><div><h2>Run configuration</h2><div id="run-details" class="table-wrap"></div></div></div><section><h2>Recording files</h2><div id="recordings" class="table-wrap"></div></section></div>
+  <footer id="footnote"></footer>
+</main>
+<!-- Additional Lucide icons use the ISC license retained above. -->
+<template id="icon-download"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg></template>
+<template id="icon-camera"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></template>
+<template id="icon-arrow-right"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></template>
+<!--DATA-->
+<script>
+"use strict";
+try {
+  const data = JSON.parse(document.getElementById("report-data").textContent);
+  const tables = data.tables, meta = data.metadata, runs = tables.summary;
+  const charts = new Map();
+  const colors = ["#2a73a4", "#ac771f", "#c23e5a", "#218d79", "#8575a6", "#92a5ad", "#516870"];
+  let currentPlot=null;
+  const el = id => document.getElementById(id);
+  const present = v => v !== undefined && v !== null && v !== "NA" && v !== "";
+  const number = v => present(v) && Number.isFinite(Number(v)) ? Number(v) : null;
+  const display = (v, unit="") => !present(v) ? "-" : (unit === "ms" ? (Number(v)/1e6).toLocaleString("en", {maximumFractionDigits:4}) + " ms" : String(v));
+  const percent = v => number(v)===null?"-":Number(v)>0 && Number(v)<0.001?"<0.001":Number(v).toLocaleString("en",{maximumFractionDigits:3});
+  const matches = (r,s) => r.run === s.run && (!r.protocol || r.protocol === s.protocol);
+  const count = v => /^\d+$/.test(String(v)) ? BigInt(v) : null;
+  const seconds = v => Number(v).toLocaleString("en",{maximumFractionDigits:3})+" s";
+  function anomalySummary(s,bad) {
+    const items=[["Recording",bad?"INCOMPLETE":"COMPLETE",bad?"bad-value":"recording-complete"]];
+    const fields=[["failed","Failed sessions","bad-value"],["timeout","Timeout records","bad-value"],
+      ["limited","Local limited","warning-value"],["skipped","Skipped requests","warning-value"],
+      ["session_skipped","Skipped session slots","warning-value"],["late","Late replies","warning-value"],
+      ["duplicate","Duplicates","warning-value"],["reordered","Reordered","warning-value"],
+      ["invalid","Invalid","bad-value"],["canceled","Canceled","warning-value"],
+      ["error","Diagnostic errors","bad-value"],["unresolved_sent_unique","Unresolved requests","warning-value"]];
+    for(const [key,label,cls] of fields) {
+      const value=count(s[key]);
+      if(value!==null && value>0n) items.push([label,value.toLocaleString("en"),cls]);
+    }
+    if(data.mode!=="summary" && s.response_timeout_status!=="available")items.push(["Request accounting",display(s.response_timeout_status),"warning-value"]);
+    if(count(s.rtt_samples)===0n)items.push(["RTT","No valid samples","warning-value"]);
+    if(count(s.rtt_samples)===null)items.push(["RTT","Unavailable","warning-value"]);
+    if(fields.slice(0,5).some(([key])=>count(s[key])===null))items.push(["Counters","Unavailable","warning-value"]);
+    if(items.length===1 && !bad)items.push(["Events","No recorded anomalies",""]);
+    const root=el("anomaly-summary");root.replaceChildren();
+    for(const [label,value,cls] of items) {
+      const item=document.createElement("div"),dt=document.createElement("dt"),dd=document.createElement("dd");
+      dt.textContent=label;dd.textContent=value;dd.className=cls;item.append(dt,dd);root.append(item);
+    }
+  }
+  function updateChartRange(instance=charts.get("range")) {
+    if(!currentPlot || !currentPlot.show || !instance)return;
+    const points=currentPlot.points,first=Number(points[0].start_s),last=Number(points.at(-1).end_s);
+    const zoom=instance.getOption().dataZoom[0];
+    currentPlot.range=[first+(last-first)*(zoom.start??0)/100,first+(last-first)*(zoom.end??100)/100];
+    el("chart-range").textContent="Chart range: "+currentPlot.range.map(seconds).join(" - ");
+  }
+  function download(blob,name) {
+    const url=URL.createObjectURL(blob),link=document.createElement("a");
+    link.href=url;link.download=name;link.hidden=true;document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function exportName(s) {return "flowgen-"+(s.protocol+"-"+s.run).replace(/[^a-zA-Z0-9_-]/g,"_");}
+  function csv(rows) {
+    const headers=Object.keys(rows[0]);
+    const quote=value=>'"'+String(value??"").replaceAll('"','""')+'"';
+    return [headers,...rows.map(row=>headers.map(key=>row[key]))].map(row=>row.map(quote).join(",")).join("\r\n")+"\r\n";
+  }
+  function exportCsv(timeline) {
+    const s=runs[Number(el("run").value)],status=el("status").textContent;
+    const accounting=status==="INCOMPLETE"?"incomplete_recording":present(s.response_timeout_status)?s.response_timeout_status:"unavailable";
+    const rows=(timeline?tables.timeline.filter(row=>matches(row,s)):[s]).map(row=>({
+      ...row,recording_status:status,request_accounting_status:accounting
+    }));
+    if(!rows.length)return;
+    download(new Blob([csv(rows)],{type:"text/csv;charset=utf-8"}),exportName(s)+(timeline?"-timeseries.csv":"-summary.csv"));
+  }
+  async function exportChart(id) {
+    const instance=charts.get(id);if(!instance || !currentPlot?.show)return;
+    // Capture the selected run, range and chart before asynchronous image decoding.
+    const s=runs[Number(el("run").value)],range=[...currentPlot.range];
+    const title=el(id).closest("section").querySelector("h2").textContent;
+    const lines=[title,s.protocol.toUpperCase()+" / run "+s.run,
+      "Chart range: "+range.map(seconds).join(" - ")+" / "+el("status").textContent];
+    instance.dispatchAction({type:"hideTip"});
+    const image=new Image();image.src=instance.getDataURL({type:"png",pixelRatio:2,backgroundColor:"#fff"});
+    await image.decode();
+    const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d");canvas.width=image.naturalWidth;
+    const text=[];
+    for(const [i,line] of lines.entries()) {
+      const font=i===0?'600 24px "Segoe UI",sans-serif':'18px "Segoe UI",sans-serif';ctx.font=font;
+      let current="";
+      for(const word of line.split(" ")) {
+        const next=current?current+" "+word:word;
+        if(current && ctx.measureText(next).width>canvas.width-48){text.push([current,font,i===0]);current=word;}
+        else current=next;
+      }
+      text.push([current,font,i===0]);
+    }
+    const header=24+text.length*30;canvas.height=image.naturalHeight+header;
+    ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
+    text.forEach(([line,font,strong],i)=>{ctx.font=font;ctx.fillStyle=strong?"#25343a":"#637880";ctx.fillText(line,24,30+i*30);});
+    ctx.drawImage(image,0,header);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
+    if(!blob)throw new Error("Could not encode chart image");
+    download(blob,exportName(s)+"-"+id+"-"+range.map(v=>v.toFixed(3)).join("-")+"s.png");
+  }
+  function icon(button,name) {button.append(el("icon-"+name).content.cloneNode(true));}
+  function exportAction(button,action) {
+    button.addEventListener("click",async()=>{
+      el("export-status").textContent="";button.disabled=true;button.setAttribute("aria-busy","true");
+      try{await action();}catch(error){el("export-status").textContent="Export failed: "+error.message;}
+      finally{button.disabled=false;button.removeAttribute("aria-busy");}
+    });
+  }
+  function table(id, headers, rows) {
+    const root = el(id); root.replaceChildren();
+    if (!rows.length) {const empty = document.createElement("div"); empty.className="empty"; empty.textContent="No recorded data"; root.append(empty); return;}
+    const t=document.createElement("table"), head=t.createTHead().insertRow();
+    for(const label of headers) {const cell=document.createElement("th");cell.textContent=label;head.append(cell);}
+    const body=t.createTBody();
+    for(const row of rows) {const tr=body.insertRow();for(const value of row) {const cell=tr.insertCell(); cell.textContent=String(value ?? "-");}}
+    root.append(t);
+  }
+  function pairs(id, row, fields, warning=[]) {
+    table(id,["Metric","Count / status"],fields.map(([label,key])=>[label,display(row[key])]));
+    for(const [i,[,key]] of fields.entries()) {
+      if(Number(row[key])>0 && warning.includes(key)) el(id).querySelectorAll("tbody tr")[i].lastChild.className="warning-value";
+      if(Number(row[key])>0 && ["failed","timeout","error","logging_dropped","corrupt_files","truncated_files","unknown_header_files","conflicting_sequences"].includes(key)) el(id).querySelectorAll("tbody tr")[i].lastChild.className="bad-value";
+    }
+  }
+  function chart(id, points, specs, units, phase, hidden=[], options={}) {
+    let instance=charts.get(id);
+    if(!instance) {instance=echarts.init(el(id),null,{renderer:"canvas"});instance.group="flowgen";charts.set(id,instance);instance.on("datazoom",()=>updateChartRange(instance));}
+    const series=specs.map(([name,key,divisor=1,axis=0,color=colors[0],type="line",source=points],i)=>({name,type,showSymbol:false,connectNulls:false,yAxisIndex:axis,
+      itemStyle:{color},lineStyle:{color,width:id==="rtt"?2.2:1.8},
+      emphasis:{focus:"series"},data:source.map(p=>[Number(p.start_s),number(p[key])===null?null:Number(p[key])/divisor]),
+      ...(id==="sessions" && i===0?{step:"end",areaStyle:{opacity:.06}}:{})}));
+    if(series.length && phase.length && !options.navigator) series[0].markLine={silent:true,symbol:"none",lineStyle:{color:"#c7d2d6",type:"dashed",width:1,opacity:.9},label:{show:id==="rtt" || id==="sample-quality",align:"right",formatter:p=>p.name,color:"#637880",fontSize:9},data:phase};
+    instance.setOption({animation:false,color:colors,textStyle:{fontFamily:'"Segoe UI",system-ui,sans-serif',fontSize:11},
+      legend:{show:!options.navigator,type:"scroll",top:0,left:8,right:8,itemWidth:14,itemHeight:7,inactiveColor:"#a7b5ba",textStyle:{fontSize:11,color:"#637880"},selected:Object.fromEntries(hidden.map(name=>[name,false]))},
+      grid:{left:55,right:55,top:options.navigator?0:36,bottom:options.navigator?0:28},
+      tooltip:{show:!options.navigator,trigger:"axis",confine:true,renderMode:"richText",backgroundColor:"#fff",borderColor:"#d0dedb",borderWidth:1,padding:[10,12],textStyle:{color:"#344e59",fontFamily:"ui-monospace,Consolas,monospace",fontSize:11},axisPointer:{lineStyle:{color:"#c7d2d6",type:"dashed"}},formatter:params=>{
+        if(!params.length)return "";
+        const point=points[params[0].dataIndex];
+        const lines=["Elapsed: "+params[0].value[0]+" s"];
+        if(id==="rtt" || id==="sample-quality") {
+          lines.push("Valid RTT samples: "+point.rtt_samples);
+          lines.push("Timeouts: "+display(point.timeout_count));
+          lines.push("Timeout % (resolved): "+(number(point.timeout_pct)===null?"-":Number(point.timeout_pct).toLocaleString("en",{maximumFractionDigits:4})+"%"));
+          if(Number(point.rtt_samples)>0 && Number(point.rtt_samples)<100)lines.push("P99: fewer than 100 samples");
+        }
+        if(id!=="sample-quality")for(const p of params){const spec=specs[p.seriesIndex ?? 0],axis=spec[3] ?? 0;lines.push(p.seriesName+": "+(p.value[1]===null?"-":Number(p.value[1]).toLocaleString("en",{maximumFractionDigits:4}))+" "+units[axis]);if(p.seriesName==="Ready" && spec[6])lines.push("Ready temporal coverage: "+display(spec[6][p.dataIndex]?.coverage_pct)+"%");}
+        return lines.join("\n");
+      }},
+      xAxis:{show:!options.navigator,type:"value",min:points.length?Number(points[0].start_s):0,max:points.length?Number(points.at(-1).end_s):1,axisLine:{lineStyle:{color:"#c7d2d6"}},axisTick:{show:false},axisLabel:{color:"#637880",fontSize:10,formatter:"{value}s"},splitLine:{show:false}},
+      yAxis:units.map((unit,i)=>({show:!options.navigator,type:"value",name:unit,min:0,splitNumber:4,...(unit==="%"?{max:v=>v.max>0?Math.min(100,v.max*1.15):1}:{}),nameGap:7,nameTextStyle:{color:"#637880",fontSize:10},axisLabel:{color:"#637880",fontSize:10,formatter:v=>Math.abs(v)>=1000?(v/1000).toLocaleString("en",{maximumFractionDigits:1})+"k":v.toLocaleString("en",{maximumFractionDigits:unit==="%"?4:2})},splitLine:{show:i===0,lineStyle:{color:"#edf1f3"}}})),
+      dataZoom:[{type:"inside",xAxisIndex:0,filterMode:"none"},...(options.navigator?[{type:"slider",xAxisIndex:0,top:11,height:21,left:55,right:55,showDetail:false,borderColor:"#d0dedb",backgroundColor:"#f3f7f5",fillerColor:"#bcd8cc55",handleStyle:{color:"#fff",borderColor:"#637880"},moveHandleStyle:{color:"#c7d2d6"},dataBackground:{lineStyle:{color:"#c7d2d6"},areaStyle:{color:"#f3f7f5"}},selectedDataBackground:{lineStyle:{color:colors[3]},areaStyle:{color:"#bcd8cc55"}},filterMode:"none"}]:[])],series},true);
+  }
+  function drawAnomalies() {
+    if(!currentPlot || !currentPlot.show || el("panel-diagnostics").hidden || charts.has("anomalies"))return;
+    const {points,phase}=currentPlot;
+    const zoom=charts.get("range").getOption().dataZoom[0];
+    chart("anomalies",points,[["Timeout","timeout_s",1,0,colors[2]],["Failed","failed_s",1,0,colors[2]],["Reordered","reordered_s",1,0,colors[1]],["Late","late_s",1,0,colors[4]],["Duplicate","duplicate_s",1,0,colors[3]],["Limited","limited_s",1,0,colors[5]],["Skipped requests","skipped_s",1,0,colors[5]],["Skipped sessions","session_skipped_s",1,0,colors[6]],["Invalid","invalid_s",1,0,colors[6]],["Canceled","canceled_s",1,0,colors[6]]],["events/s"],phase,["Late","Duplicate","Skipped requests","Skipped sessions","Invalid","Canceled"]);
+    echarts.connect("flowgen");
+    charts.get("anomalies").dispatchAction({type:"dataZoom",start:zoom.start,end:zoom.end});
+  }
+  function selectTab(name) {
+    for(const button of document.querySelectorAll("[data-tab]")) {
+      const selected=button.dataset.tab===name;
+      button.setAttribute("aria-selected",String(selected));button.tabIndex=selected?0:-1;
+      el("panel-"+button.dataset.tab).hidden=!selected;
+    }
+    drawAnomalies();
+    for(const instance of charts.values())instance.resize();
+  }
+  function render(index) {
+    const s=runs[index];if(!s) return;
+    if(charts.has("anomalies")){charts.get("anomalies").dispose();charts.delete("anomalies");}
+    const sameMeta=meta.run===s.run;
+    const bad=s.incomplete==="true" || Number(data.extra.bad_headers)>0 || (sameMeta && meta.complete==="false");
+    const timeoutAvailable=!bad && s.response_timeout_status==="available";
+    const points=tables.timeline.filter(p=>matches(p,s)).map(p=>{
+      const samples=number(p.rtt_samples), width=number(p.bucket_s), rate=number(p.timeout_s);
+      const timeouts=width>0 && rate!==null && rate>=0?Math.round(rate*width):null;
+      const resolved=samples===null || timeouts===null?null:samples+timeouts;
+      return {...p,timeout_count:timeouts,timeout_pct:timeoutAvailable && resolved>0?100*timeouts/resolved:null};
+    });
+    el("status").textContent=bad?"INCOMPLETE":data.mode==="summary"?"SUMMARY":"COMPLETE";
+    el("status").classList.toggle("bad",bad);el("incomplete").hidden=!bad;
+    anomalySummary(s,bad);el("export-status").textContent="";
+    const compact=v=>{const n=number(v);return n===null?"-":n>0 && n<.01?"<0.01":n.toLocaleString("en",{maximumFractionDigits:2});};
+    const attainment=(tables.attainment||[]).filter(row=>matches(row,s));
+    const targetRows=["ready","request_pps","turnover"].map(metric=>{
+      const row=attainment.find(row=>row.metric===metric)||{};
+      const known=number(row.actual)!==null;
+      const detail=metric==="ready"?(known?"Min "+display(row.ready_min)+" / max deficit "+display(row.max_deficit)+" / coverage "+compact(row.coverage_pct)+"%":"Ready sampling unavailable"):
+        metric==="turnover"?(known?"Initiated rotations / not replacement success":"Rotation counter unavailable"):
+        known?"Sent within LOAD / excludes drain":"Exact LOAD send count unavailable";
+      return [metric==="ready"?"Ready sessions / avg":metric==="request_pps"?"Request PPS":"Turnover /s",compact(row.target),compact(row.actual),bad?"-":number(row.attainment_pct)===null?"-":compact(row.attainment_pct)+"%",bad?"Incomplete run":row.status||"Unavailable",detail];
+    });
+    table("attainment",["Metric","Target","Actual","Achieved","Status","Observation"],targetRows);
+    for(const [i,metric] of ["ready","request_pps","turnover"].entries()){
+      const row=attainment.find(row=>row.metric===metric);
+      if(!row || bad || number(row.attainment_pct)===null)continue;
+      const cell=el("attainment").querySelectorAll("tbody tr")[i].cells[3];
+      cell.className=row.status==="partial"?"warning-value":Number(row.attainment_pct)>=100?"attained":"warning-value";
+      cell.title=row.attainment_pct+"%";
+    }
+    const loadSeconds=attainment.find(row=>number(row.load_s)!==null)?.load_s;
+    el("attainment-scope").textContent=present(loadSeconds)?"LOAD / "+compact(loadSeconds)+" s":"LOAD unavailable";
+    el("export-attainment").disabled=!attainment.length;
+    el("target").textContent=sameMeta && present(meta.target)?meta.target:s.protocol.toUpperCase();
+    el("metadata").replaceChildren();
+    const values=[];
+    if(sameMeta) values.push(...[["Sessions",meta.sessions],["Warmup",present(meta.warmup)?meta.warmup+" s":null],["Turnover",present(meta.turnover)?meta.turnover+" /s":null],["PPS/session",meta.pps_per_session],["Payload",present(meta.length)?meta.length+" B":null],["Load",meta.duration==="0"?"Until stopped":present(meta.duration)?meta.duration+" s":null],["Workers",meta.workers]]);
+    else values.push(["Protocol",s.protocol.toUpperCase()],["Run",s.run],["Recording",data.mode]);
+    for(const [label,value] of values) {if(!present(value))continue;const item=document.createElement("span");item.textContent=label;const b=document.createElement("b");b.textContent=value;item.append(b);el("metadata").append(item);}
+    const latencyValue=v=>number(v)===null?"-":(Number(v)/1e6).toLocaleString("en",{maximumFractionDigits:2,minimumFractionDigits:2});
+    const metrics=[["Average RTT",latencyValue(s.rtt_avg_ns),"ms"],["P90 RTT",latencyValue(s.rtt_p90_ns),"ms"],["P99 RTT",latencyValue(s.rtt_p99_ns),"ms","tail"],["Max RTT",latencyValue(s.rtt_max_ns),"ms"],["Request timeout",percent(timeoutAvailable?s.response_timeout_pct:null),"%",timeoutAvailable && Number(s.response_timeout_pct)>0?"alert":""],["Valid RTT samples",present(s.rtt_samples)?BigInt(s.rtt_samples).toLocaleString("en"):"-",""]];
+    el("metrics").replaceChildren();
+    for(const [label,value,unit,cls] of metrics){const item=document.createElement("div");item.className=cls||"";const dt=document.createElement("dt"),dd=document.createElement("dd"),small=document.createElement("small");dt.textContent=label;dd.textContent=value;small.textContent=unit;dd.append(small);item.append(dt,dd);if(label==="Request timeout")dd.title=timeoutAvailable?display(s.response_timeout_pct)+"%":"Unavailable request accounting";el("metrics").append(item);}
+    const show=points.length>0;el("charts").hidden=!show;el("reset").hidden=!show;el("no-series").hidden=show;
+    el("export-timeline").disabled=!show;
+    el("anomaly-section").hidden=!show;
+    el("no-series").textContent=data.mode==="summary"?"No time-series data: summary recording retains aggregate statistics only.":"No time-series samples were recorded.";
+    const phase=[];
+    if(sameMeta){
+      if(present(meta.load_start_ns))phase.push({name:"Load",xAxis:Number(meta.load_start_ns)/1e9});
+      else if(present(meta.warmup))phase.push({name:"Configured warmup",xAxis:Number(meta.warmup)});
+      if(present(meta.drain_start_ns))phase.push({name:"Drain",xAxis:Number(meta.drain_start_ns)/1e9});
+    }
+    currentPlot={points,phase,show};
+    if(show){
+      el("resolution").textContent="ms / "+Number(points[0].bucket_s)+" s buckets";
+      chart("rtt",points,[["Avg","rtt_avg_ns",1e6,0,colors[0]],["P90","rtt_p90_ns",1e6,0,colors[1]],["P99","rtt_p99_ns",1e6,0,colors[2]],["P50","rtt_p50_ns",1e6,0,colors[3]],["P95","rtt_p95_ns",1e6,0,colors[4]],["Min","rtt_min_ns",1e6,0,colors[5]],["Max","rtt_max_ns",1e6,0,colors[6]]],["ms"],phase,["P50","P95","Min","Max"]);
+      chart("sample-quality",points,[["Valid RTT samples","rtt_samples",1,0,"#abc5d1","bar"],["Timeout %","timeout_pct",1,1,colors[2]]],["samples","%"],phase);
+      el("sample-quality").title=timeoutAvailable?"Timeout % = timed out / (on-time replies + timed out), by completion bucket. Pending, canceled and duplicate replies excluded.":"Timeout % unavailable: incomplete recording or unavailable request accounting. Sample counts show observed RTTs only.";
+      chart("traffic",points,[["Sent","sent_pps",1,0,colors[0]],["On-time","on_time_pps",1,0,colors[3]],["Sent Mbit/s","send_mbps",1,1,colors[4]],["Responses","response_pps",1,0,colors[1]],["Response Mbit/s","response_mbps",1,1,colors[5]]],["msg/s","Mbit/s"],phase,["Responses","Response Mbit/s"]);
+      const readiness=(tables.readiness||[]).filter(row=>matches(row,s));
+      const sessionSpecs=[["Live","active_sessions",1,0,colors[3]]];
+      if(readiness.length)sessionSpecs.push(["Ready","ready_sessions",1,0,colors[0],"line",readiness],["Deficit","deficit_sessions",1,0,colors[2],"line",readiness]);
+      sessionSpecs.push(["Opened/s","open_s",1,1,colors[0]],["Failed/s","failed_s",1,1,colors[2]],["Timeout/s","timeout_s",1,1,colors[1]],["Ready/s","ready_s",1,1,colors[4]],["Closed/s","closed_s",1,1,colors[5]]);
+      chart("sessions",points,sessionSpecs,["sessions","events/s"],phase,["Opened/s","Ready/s","Closed/s","Timeout/s"]);
+      chart("range",points,[["P99","rtt_p99_ns",1e6,0,"#8ba7b7"]],["ms"],[],[],{navigator:true});
+      el("anomaly-note").textContent=s.protocol==="tcp"?"Events/s · TCP request timeouts are not packet loss":"Events/s · UDP round-trip timeouts do not identify the impaired direction";
+      echarts.connect("flowgen");
+      drawAnomalies();
+    } else {
+      for(const instance of charts.values())instance.dispose();charts.clear();
+    }
+    const latencyRows=[
+      ["RTT", "rtt_samples", ["rtt_min_ns","rtt_avg_ns","rtt_max_ns","rtt_mdev_ns","rtt_p50_ns","rtt_p90_ns","rtt_p95_ns","rtt_p99_ns"]],
+      ["Session mean RTT","session_mean_samples",["session_mean_min_ns","session_mean_avg_ns","session_mean_max_ns","session_mean_mdev_ns","session_mean_p50_ns",null,"session_mean_p95_ns","session_mean_p99_ns"]],
+      ["Setup","setup_samples",[null,"setup_avg_ns",null,null,"setup_p50_ns",null,"setup_p95_ns","setup_p99_ns"]],
+      ["RTT jitter","jitter_pairs",[null,"jitter_avg_ns",null,null,null,null,"jitter_p95_ns","jitter_p99_ns"]]
+    ];
+    table("latency",["Metric","N","Min","Avg","Max","Mdev","P50","P90","P95","P99"],latencyRows.map(([name,count,keys])=>[name,display(s[count]),...keys.map(key=>display(key?s[key]:null,"ms"))]));
+    const warnings=["late","duplicate","reordered","limited","skipped","session_skipped","canceled"];
+    pairs("outcomes",s,[["Sent","sent"],["Response records","response_records"],["Timeout","timeout"],["Canceled","canceled"],["Late","late"],["Duplicate","duplicate"],["Reordered","reordered"],["Invalid","invalid"]],warnings);
+    pairs("scheduling",s,[["Sessions observed","sessions"],["Without RTT","sessions_without_rtt"],["Opened","open"],["Ready","ready"],["Closed","closed"],["Failed","failed"],["Limited","limited"],["Skipped request slots","skipped"],["Skipped session starts","session_skipped"],["Diagnostic errors","error"]],warnings);
+    pairs("quality",s,[["Incomplete","incomplete"],["Logging dropped","logging_dropped"],["Unknown drop count files","unknown_dropped_files"],["Truncated files","truncated_files"],["Corrupt files","corrupt_files"],["Unknown header files","unknown_header_files"],["Conflicting sequences","conflicting_sequences"]]);
+    const runDetails=sameMeta?{...meta,run:s.run,protocol:s.protocol,mode:data.mode}:{run:s.run,protocol:s.protocol,mode:data.mode};
+    pairs("run-details",runDetails,Object.keys(runDetails).map(key=>[key.replaceAll("_"," "),key]));
+    pairs("timeouts",s,[["Unique sent","sent_unique"],["Canceled sent","sent_canceled_unique"],["Canceled before send","unsent_canceled_unique"],["Unique timed out","sent_timeout_unique"],["Unique late","sent_late_unique"],["Unresolved sent","unresolved_sent_unique"],["Orphan outcomes","orphan_outcomes_unique"],["Conflicting outcomes","conflicting_outcomes_unique"],["Eligible denominator","response_timeout_denominator"],["Request timeout %","response_timeout_pct"],["Accounting status","response_timeout_status"]]);
+    table("worst",["Run / protocol","Session","N","Mean RTT (ms)","Status"],(data.extra.worst||[]).map(w=>[w.run+" / "+w.protocol,w.flow,w.samples,Number(w.avg_ms).toFixed(4),w.incomplete?"INCOMPLETE":"Complete"]));
+    table("errors",["Stage","Errno","Count"],tables.errors.filter(r=>matches(r,s)).map(r=>[r.stage,r.errno,r.count]));
+    table("recordings",["File","Events","Dropped","Complete","Truncated","Corrupt","Error"],tables.recordings.filter(r=>(r.run===s.run && r.role==="client") || r.role==="NA").map(r=>[r.file,r.events,r.dropped,r.complete,r.truncated,r.corrupt,r.error||"-"]));
+    const forward=tables.forward.find(r=>r.run===s.run);el("forward-section").hidden=!forward;
+    if(forward)pairs("forward",forward,Object.keys(forward).filter(k=>k!=="run").map(k=>[k.replaceAll("_"," "),k]));
+    el("footnote").textContent="Client monotonic-clock RTT. Percentiles are message-weighted; session mean RTT is a separate distribution. Jitter is the absolute RTT difference for adjacent successful sequence numbers in one session. Timeline rates use full fixed-width buckets, including the last bucket. Timeout % uses outcomes completed in each bucket, not requests sent in that bucket; no completed outcomes means unavailable, not 0%. Response rate and bandwidth include late and duplicate replies; RTT excludes them. Raw CSV values retain nanosecond precision.";
+    updateChartRange();
+    for(const instance of charts.values())instance.resize();
+  }
+  for(const [i,s] of runs.entries()){const option=document.createElement("option");option.value=String(i);option.textContent=s.protocol.toUpperCase()+" / "+s.run;el("run").append(option);}
+  for(const id of ["rtt","sample-quality","traffic","sessions","anomalies"]) {
+    const section=el(id).closest("section");let head=section.querySelector(".section-head");
+    if(!head){head=document.createElement("div");head.className="section-head";head.append(section.querySelector("h2"));section.prepend(head);}
+    const actions=document.createElement("div");actions.className="chart-actions";
+    const subtitle=head.querySelector(".subtitle");if(subtitle)actions.append(subtitle);
+    const button=document.createElement("button");button.type="button";button.className="icon-button";button.dataset.chartExport=id;
+    button.title="Download current chart as PNG";button.setAttribute("aria-label","Download "+head.querySelector("h2").textContent+" as PNG");
+    icon(button,"camera");actions.append(button);head.append(actions);exportAction(button,()=>exportChart(id));
+  }
+  icon(el("export-summary"),"download");exportAction(el("export-summary"),()=>exportCsv(false));
+  icon(el("export-timeline"),"download");exportAction(el("export-timeline"),()=>exportCsv(true));
+  icon(el("export-attainment"),"download");exportAction(el("export-attainment"),()=>{
+    const s=runs[Number(el("run").value)], rows=(tables.attainment||[]).filter(row=>matches(row,s));
+    const bad=s.incomplete==="true" || Number(data.extra.bad_headers)>0 || (meta.run===s.run && meta.complete==="false");
+    download(new Blob([csv(rows.map(row=>({...row,attainment_pct:bad?"NA":row.attainment_pct,recording_status:bad?"INCOMPLETE":"COMPLETE"})))],{type:"text/csv;charset=utf-8"}),exportName(s)+"-attainment.csv");
+  });
+  icon(el("open-diagnostics"),"arrow-right");el("open-diagnostics").addEventListener("click",()=>{
+    selectTab("diagnostics");el("tab-diagnostics").focus();el("tab-diagnostics").scrollIntoView({block:"nearest"});
+  });
+  el("run").addEventListener("change",()=>render(Number(el("run").value)));
+  el("reset").addEventListener("click",()=>{for(const chart of charts.values())chart.dispatchAction({type:"dataZoom",start:0,end:100});});
+  const tabs=Array.from(document.querySelectorAll("[data-tab]"));
+  for(const tab of tabs) {
+    tab.addEventListener("click",()=>selectTab(tab.dataset.tab));
+    tab.addEventListener("keydown",event=>{
+      const index=tabs.indexOf(tab), target=event.key==="Home"?0:event.key==="End"?tabs.length-1:event.key==="ArrowRight"?(index+1)%tabs.length:event.key==="ArrowLeft"?(index+tabs.length-1)%tabs.length:null;
+      if(target===null)return;event.preventDefault();selectTab(tabs[target].dataset.tab);tabs[target].focus();
+    });
+  }
+  window.addEventListener("resize",()=>{for(const chart of charts.values())chart.resize();});
+  render(0);
+} catch(error) {document.getElementById("render-error").textContent="Report could not be rendered: "+error.message;}
+</script>
+</body>
+</html>

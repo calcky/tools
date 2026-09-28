@@ -54,6 +54,9 @@ const SETUP_COLUMNS: &str = "setup_samples,setup_avg_ns,setup_p50_ns,setup_p95_n
 const TIMEOUT_COLUMNS: &str = "sent_unique,sent_canceled_unique,unsent_canceled_unique,sent_timeout_unique,sent_late_unique,unresolved_sent_unique,orphan_outcomes_unique,conflicting_outcomes_unique,response_timeout_denominator,response_timeout_pct,response_timeout_status";
 const FORWARD_COLUMNS: &str = "observed_sent_unique,observed_server_request_unique,observed_matched_unique,observed_server_only_unique,forward_delivered_unique,forward_missing_unique,forward_missing_pct,forward_status,client_files,server_files,logging_dropped,unknown_dropped_files,truncated_files,corrupt_files,unknown_header_files,run_client_sent_records,run_server_request_records,manifest_client_sent,manifest_server_request,manifest_status";
 
+#[path = "analyze_timeline.rs"]
+mod timeline;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct Group {
     run: u64,
@@ -181,10 +184,10 @@ impl Entry {
     }
 }
 
-struct Scratch(PathBuf);
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Scratch {
-    fn new(dir: &Path) -> io::Result<Self> {
+    pub(crate) fn new(dir: &Path) -> io::Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         for _ in 0..1024 {
             let path = dir.join(format!(
@@ -585,6 +588,8 @@ struct Sequence {
     timed_out: bool,
     canceled: bool,
     late: bool,
+    sent_event: Option<Event>,
+    timeout_event: Option<Event>,
 }
 
 struct Session {
@@ -599,6 +604,7 @@ struct Session {
     setup_event: Option<Event>,
     setup: Samples,
     timeouts: Timeouts,
+    lifetime: timeline::Lifetime,
 }
 
 impl Session {
@@ -615,6 +621,7 @@ impl Session {
             setup_event: None,
             setup: Samples::default(),
             timeouts: Timeouts::default(),
+            lifetime: timeline::Lifetime::default(),
         }
     }
 
@@ -624,13 +631,15 @@ impl Session {
         server: bool,
         group: &mut Aggregate,
         total: &mut Aggregate,
+        timeline: &mut timeline::Timeline,
+        key: Group,
     ) -> io::Result<()> {
         if self
             .sequence
             .as_ref()
             .is_some_and(|seq| seq.seq != event.seq)
         {
-            self.finish_sequence(group, total)?;
+            self.finish_sequence(group, total, timeline, key)?;
         }
         let sequence = self.sequence.get_or_insert_with(|| Sequence {
             seq: event.seq,
@@ -638,6 +647,13 @@ impl Session {
             ..Sequence::default()
         });
         self.events += 1;
+        self.lifetime.observe(event);
+        if !matches!(
+            event.kind,
+            Kind::Open | Kind::Ready | Kind::Closed | Kind::Sent | Kind::Response | Kind::Timeout
+        ) {
+            timeline.push(key, event)?;
+        }
         self.counts[event.kind as usize] += if event.kind == Kind::Skipped {
             event.value
         } else {
@@ -646,14 +662,23 @@ impl Session {
         if event.kind == Kind::Response && !server {
             if sequence.response.is_some() {
                 self.counts[Kind::Duplicate as usize] += 1;
+                let mut duplicate = event;
+                duplicate.kind = Kind::Duplicate;
+                timeline.push(key, duplicate)?;
             } else {
                 // Sorting by time within kind chooses the earliest completion.
                 sequence.response = Some(event);
             }
         }
         match event.kind {
-            Kind::Sent => sequence.sent = true,
-            Kind::Timeout => sequence.timed_out = true,
+            Kind::Sent => {
+                sequence.sent = true;
+                sequence.sent_event.get_or_insert(event);
+            }
+            Kind::Timeout => {
+                sequence.timed_out = true;
+                sequence.timeout_event.get_or_insert(event);
+            }
             Kind::Canceled => sequence.canceled = true,
             Kind::Late => sequence.late = true,
             Kind::Ready
@@ -669,11 +694,23 @@ impl Session {
         Ok(())
     }
 
-    fn finish_sequence(&mut self, group: &mut Aggregate, total: &mut Aggregate) -> io::Result<()> {
+    fn finish_sequence(
+        &mut self,
+        group: &mut Aggregate,
+        total: &mut Aggregate,
+        timeline: &mut timeline::Timeline,
+        key: Group,
+    ) -> io::Result<()> {
         let Some(sequence) = self.sequence.take() else {
             return Ok(());
         };
         self.timeouts.observe(&sequence);
+        for event in [sequence.sent_event, sequence.timeout_event]
+            .into_iter()
+            .flatten()
+        {
+            timeline.push(key, event)?;
+        }
         let Some(response) = sequence.response else {
             return Ok(());
         };
@@ -685,6 +722,7 @@ impl Session {
         for samples in [&mut self.rtt, &mut group.rtt, &mut total.rtt] {
             samples.add(response.value)?;
         }
+        timeline.push(key, response)?;
         if let Some((seq, value)) = self.previous {
             if seq.checked_add(1) == Some(sequence.seq) {
                 let jitter = value.abs_diff(response.value);
@@ -719,10 +757,11 @@ fn finish_session(
     group: &mut Aggregate,
     total: &mut Aggregate,
     bad_headers: u64,
-    out: &mut impl Write,
-    worst: &mut Vec<Worst>,
+    outputs: (&mut impl Write, &mut Vec<Worst>, &mut timeline::Timeline),
 ) -> io::Result<()> {
-    session.finish_sequence(group, total)?;
+    let (out, worst, timeline) = outputs;
+    session.finish_sequence(group, total, timeline, key)?;
+    session.lifetime.finish(key, timeline)?;
     if let Some(ready) = session.setup_event {
         for samples in [&mut session.setup, &mut group.setup, &mut total.setup] {
             samples.add(ready.value)?;
@@ -794,6 +833,12 @@ fn write_group(
         .write_csv(out, key.server, group.quality.incomplete(bad_headers, 0))?;
     write!(out, ",")?;
     group.quality.write_csv(out, bad_headers, group.conflicts)?;
+    write!(out, ",")?;
+    if group.rtt.count == 0 {
+        write!(out, "NA")?;
+    } else {
+        write!(out, "{}", group.rtt.quantile(0.90))?;
+    }
     writeln!(out)
 }
 
@@ -1310,7 +1355,11 @@ pub fn run(dir: &Path) -> io::Result<()> {
     require_event_recording(dir)?;
     let report = analyze(dir, CHUNK_ENTRIES, MERGE_FAN_IN)?;
     let stdout = io::stdout();
-    write_report(&report, dir, &mut stdout.lock(), console::color_enabled())
+    write_report(&report, dir, &mut stdout.lock(), console::color_enabled())?;
+    if dir.join("report.html").is_file() {
+        println!("HTML report: {}", dir.join("report.html").display());
+    }
+    Ok(())
 }
 
 fn require_event_recording(dir: &Path) -> io::Result<()> {
@@ -1364,6 +1413,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
     )?;
     let mut files = 0;
     let mut bad_headers = 0;
+    let mut timeline = timeline::Timeline::new(dir, chunk_limit, fan_in)?;
     for item in fs::read_dir(dir)? {
         let item = item?;
         if item
@@ -1400,6 +1450,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
             Err(error) => return Err(error),
         };
         let group = Group::from(reader.header);
+        timeline.file(group)?;
         while let Some(event) = reader.next_event()? {
             sorter.push(Entry {
                 group,
@@ -1428,7 +1479,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
         sessions,
         "run,protocol,role,flow,events,{COUNTER_COLUMNS},{METRIC_COLUMNS},{SETUP_COLUMNS},{TIMEOUT_COLUMNS},{QUALITY_COLUMNS}"
     )?;
-    writeln!(summary, "run,protocol,role,sessions,sessions_without_rtt,events,{COUNTER_COLUMNS},{METRIC_COLUMNS},session_mean_samples,session_mean_min_ns,session_mean_avg_ns,session_mean_max_ns,session_mean_mdev_ns,session_mean_p50_ns,session_mean_p95_ns,session_mean_p99_ns,{SETUP_COLUMNS},{TIMEOUT_COLUMNS},{QUALITY_COLUMNS}")?;
+    writeln!(summary, "run,protocol,role,sessions,sessions_without_rtt,events,{COUNTER_COLUMNS},{METRIC_COLUMNS},session_mean_samples,session_mean_min_ns,session_mean_avg_ns,session_mean_max_ns,session_mean_mdev_ns,session_mean_p50_ns,session_mean_p95_ns,session_mean_p99_ns,{SETUP_COLUMNS},{TIMEOUT_COLUMNS},{QUALITY_COLUMNS},rtt_p90_ns")?;
     let mut report = Report {
         files,
         bad_headers,
@@ -1459,8 +1510,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
                             &mut group,
                             &mut report.totals[key.total_index()],
                             bad_headers,
-                            &mut sessions,
-                            &mut report.worst,
+                            (&mut sessions, &mut report.worst, &mut timeline),
                         )?;
                     }
                     write_group(&mut summary, key, &group, bad_headers)?;
@@ -1482,6 +1532,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
                     aggregate.events += 1;
                     aggregate.counts[Kind::SessionSkipped as usize] += entry.event.value;
                 }
+                timeline.push(entry.group, entry.event)?;
                 continue;
             }
             if session
@@ -1494,13 +1545,19 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
                     &mut group,
                     total,
                     bad_headers,
-                    &mut sessions,
-                    &mut report.worst,
+                    (&mut sessions, &mut report.worst, &mut timeline),
                 )?;
             }
             session
                 .get_or_insert_with(|| Session::new(entry.event.flow))
-                .push(entry.event, entry.group.server, &mut group, total)?;
+                .push(
+                    entry.event,
+                    entry.group.server,
+                    &mut group,
+                    total,
+                    &mut timeline,
+                    entry.group,
+                )?;
         }
     }
     if let Some(key) = active_group {
@@ -1511,8 +1568,7 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
                 &mut group,
                 &mut report.totals[key.total_index()],
                 bad_headers,
-                &mut sessions,
-                &mut report.worst,
+                (&mut sessions, &mut report.worst, &mut timeline),
             )?;
         }
         write_group(&mut summary, key, &group, bad_headers)?;
@@ -1530,6 +1586,28 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
         bad_headers,
         &manifests,
     )?;
+    let has_timeline = timeline.finish(&sorter.scratch.0, dir)?;
+    if has_timeline {
+        let worst: Vec<_> = report
+            .worst
+            .iter()
+            .filter(|w| !w.group.server)
+            .map(|w| {
+                serde_json::json!({
+                    "run": w.group.run.to_string(), "protocol": w.group.protocol(),
+                    "flow": w.flow.to_string(), "samples": w.samples.to_string(),
+                    "avg_ms": w.mean / 1e6, "incomplete": w.incomplete
+                })
+            })
+            .collect();
+        crate::html_report::events(
+            dir,
+            &sorter.scratch.0,
+            serde_json::json!({
+                "worst": worst, "bad_headers": report.bad_headers
+            }),
+        )?;
+    }
     for name in [
         "sessions.csv",
         "summary.csv",
@@ -1539,6 +1617,19 @@ fn analyze(dir: &Path, chunk_limit: usize, fan_in: usize) -> io::Result<Report> 
         "forward-summary.csv",
     ] {
         fs::rename(sorter.scratch.0.join(name), dir.join(name))?;
+    }
+    if has_timeline {
+        for name in ["attainment.csv", "readiness.csv"] {
+            fs::rename(sorter.scratch.0.join(name), dir.join(name))?;
+        }
+        fs::rename(
+            sorter.scratch.0.join("timeseries.csv"),
+            dir.join("timeseries.csv"),
+        )?;
+        fs::rename(
+            sorter.scratch.0.join("report.html"),
+            dir.join("report.html"),
+        )?;
     }
     Ok(report)
 }
@@ -1605,6 +1696,216 @@ mod tests {
             time_ns: seq,
             len: 128,
         }
+    }
+
+    #[test]
+    fn load_pps_counts_exact_deduplicated_sends_not_fractional_buckets() {
+        let dir = TestDir::new();
+        fs::write(dir.0.join("run.txt"), "run 1\nprotocol udp\nsessions 1\npps_per_session 10\nload_start_ns 250000000\ndrain_start_ns 750000000\nend_ns 1000000000\ncomplete true\n").unwrap();
+        let at = |seq, kind, time_ns| Event {
+            time_ns,
+            ..event(1, seq, kind, 0)
+        };
+        let events = [
+            at(1, Kind::Sent, 249_999_999),
+            at(1, Kind::Timeout, 250_000_000),
+            at(2, Kind::Sent, 250_000_000),
+            at(2, Kind::Timeout, 260_000_000),
+            at(3, Kind::Sent, 749_999_999),
+            at(3, Kind::Timeout, 750_000_000),
+            at(4, Kind::Sent, 750_000_000),
+            at(4, Kind::Timeout, 760_000_000),
+        ];
+        dir.record("a.fgr", 1, false, false, &events);
+        dir.record("duplicate-worker.fgr", 1, false, false, &events);
+        dir.record("another-run.fgr", 2, false, false, &events);
+        dir.record("another-protocol.fgr", 1, true, false, &events);
+        analyze(&dir.0, 2, 2).unwrap();
+        let row = &dir.rows("attainment.csv")[1];
+        assert_eq!(row["load_sent"], "2");
+        assert_eq!(row["actual"], "4");
+        assert_eq!(row["attainment_pct"], "40");
+        assert_eq!(row["protocol"], "udp");
+    }
+
+    #[test]
+    fn client_timeline_merges_samples_and_separates_late_duplicate_and_conflicting_outcomes() {
+        let dir = TestDir::new();
+        let at = |flow, seq, kind, value, time_ns| Event {
+            time_ns,
+            ..event(flow, seq, kind, value)
+        };
+        dir.record(
+            "a.fgr",
+            1,
+            false,
+            false,
+            &[
+                at(1, 0, Kind::Open, 0, 0),
+                at(1, 0, Kind::Ready, 10, 100_000_000),
+                at(1, 1, Kind::Sent, 0, 200_000_000),
+                at(1, 1, Kind::Response, 10_000_000, 210_000_000),
+                at(1, 1, Kind::Response, 99_000_000, 220_000_000),
+                at(1, 2, Kind::Sent, 0, 990_000_000),
+                at(1, 2, Kind::Response, 30_000_000, 1_020_000_000),
+                at(1, 3, Kind::Sent, 0, 1_030_000_000),
+                at(1, 3, Kind::Timeout, 0, 1_500_000_000),
+                at(1, 3, Kind::Late, 0, 1_600_000_000),
+                at(1, 4, Kind::Sent, 0, 1_700_000_000),
+                at(1, 4, Kind::Timeout, 0, 1_800_000_000),
+                at(1, 4, Kind::Response, 999_000_000, 1_900_000_000),
+                at(1, 0, Kind::Closed, 0, 3_000_000_000),
+            ],
+        );
+        dir.record(
+            "b.fgr",
+            1,
+            false,
+            false,
+            &[
+                at(2, 0, Kind::Open, 0, 0),
+                at(2, 0, Kind::Ready, 10, 100_000_000),
+                at(2, 1, Kind::Sent, 0, 200_000_000),
+                at(2, 1, Kind::Response, 20_000_000, 220_000_000),
+                at(2, 0, Kind::Failed, 0, 3_000_000_000),
+                at(2, 0, Kind::Closed, 0, 3_000_000_001),
+            ],
+        );
+        let report = analyze(&dir.0, 2, 2).unwrap();
+        let rows = dir.rows("timeseries.csv");
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0]["rtt_samples"], "2");
+        assert_eq!(rows[0]["rtt_avg_ns"], "15000000.000");
+        assert!(
+            (rows[0]["rtt_p90_ns"].parse::<u64>().unwrap() as f64 / 20_000_000.0 - 1.0).abs()
+                < 0.002
+        );
+        assert_eq!(rows[0]["sent_pps"], "3.000000");
+        assert_eq!(rows[0]["response_pps"], "3.000000");
+        assert_eq!(rows[0]["duplicate_s"], "1.000000");
+        assert_eq!(rows[0]["on_time_pps"], "2.000000");
+        assert_eq!(rows[0]["response_mbps"], "0.003072");
+        assert_eq!(rows[1]["rtt_samples"], "1");
+        assert_eq!(rows[1]["rtt_avg_ns"], "30000000.000");
+        assert_eq!(rows[1]["late_s"], "1.000000");
+        assert_eq!(rows[1]["timeout_s"], "2.000000");
+        assert_eq!(rows[2]["rtt_avg_ns"], "NA");
+        assert_eq!(rows[2]["sent_pps"], "0.000000");
+        assert_eq!(rows[2]["active_sessions"], "2");
+        assert_eq!(rows[3]["active_sessions"], "0");
+        assert_eq!(rows[3]["closed_s"], "2.000000");
+        assert_eq!(
+            rows.iter()
+                .map(|r| r["rtt_samples"].parse::<u64>().unwrap())
+                .sum::<u64>(),
+            report.totals[0].rtt.count
+        );
+        let html = fs::read_to_string(dir.0.join("report.html")).unwrap();
+        assert!(html.contains("\"incomplete\":\"true\""));
+    }
+
+    #[test]
+    fn client_timeline_bounds_long_runs_isolates_groups_and_does_not_generate_server_html() {
+        let dir = TestDir::new();
+        dir.record(
+            "long.fgr",
+            1,
+            true,
+            false,
+            &[
+                event(1, 0, Kind::Open, 0),
+                Event {
+                    time_ns: 10_800_000_000_000,
+                    ..event(1, 1, Kind::Response, 100)
+                },
+                Event {
+                    time_ns: 10_800_000_000_001,
+                    ..event(1, 0, Kind::Failed, 0)
+                },
+            ],
+        );
+        dir.record(
+            "short.fgr",
+            2,
+            false,
+            false,
+            &[event(1, 1, Kind::Response, 900)],
+        );
+        dir.record(
+            "server.fgr",
+            1,
+            true,
+            true,
+            &[event(1, 1, Kind::ServerResponse, 0)],
+        );
+        analyze(&dir.0, 2, 2).unwrap();
+        let rows = dir.rows("timeseries.csv");
+        let long: Vec<_> = rows.iter().filter(|r| r["run"] == "1").collect();
+        assert!(long.len() <= 3600);
+        assert_eq!(long[0]["bucket_s"], "4.000000");
+        assert_eq!(long.last().unwrap()["active_sessions"], "0");
+        assert_eq!(long.last().unwrap()["closed_s"], "0.000000");
+        assert!(rows.iter().all(|r| r["role"] == "client"));
+        assert_eq!(rows.iter().filter(|r| r["run"] == "2").count(), 1);
+        assert_eq!(
+            rows.iter().find(|r| r["run"] == "2").unwrap()["rtt_avg_ns"],
+            "900.000"
+        );
+        let server = TestDir::new();
+        server.record(
+            "server.fgr",
+            3,
+            false,
+            true,
+            &[event(1, 1, Kind::ServerRequest, 0)],
+        );
+        analyze(&server.0, 2, 2).unwrap();
+        assert!(!server.0.join("report.html").exists());
+        assert!(!server.0.join("timeseries.csv").exists());
+    }
+
+    #[test]
+    fn client_html_preserves_u64_ids_escapes_metadata_and_survives_incomplete_logs() {
+        let dir = TestDir::new();
+        fs::write(
+            dir.0.join("run.txt"),
+            format!(
+                "run {}\ntarget </script><script>alert(1)</script>\n",
+                u64::MAX
+            ),
+        )
+        .unwrap();
+        dir.record(
+            "client.fgr",
+            u64::MAX,
+            false,
+            false,
+            &[event(1, 1, Kind::Response, 1_000_000)],
+        );
+        let path = dir.0.join("client.fgr");
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.truncate(bytes.len() - 40);
+        fs::write(path, bytes).unwrap();
+        analyze(&dir.0, 2, 2).unwrap();
+        let html = fs::read_to_string(dir.0.join("report.html")).unwrap();
+        let encoded = html
+            .split("<script id=\"report-data\" type=\"application/json\">\n")
+            .nth(1)
+            .unwrap()
+            .split("</script>")
+            .next()
+            .unwrap();
+        assert!(!encoded.contains("</script>"));
+        let value: serde_json::Value = serde_json::from_str(encoded).unwrap();
+        assert_eq!(
+            value["metadata"]["target"],
+            "</script><script>alert(1)</script>"
+        );
+        assert_eq!(value["tables"]["summary"][0]["run"], u64::MAX.to_string());
+        assert_eq!(value["tables"]["summary"][0]["incomplete"], "true");
+        assert!(!html.contains("src=\"http"));
+        // Replay safely replaces its own reports.
+        analyze(&dir.0, 2, 2).unwrap();
     }
 
     #[test]
@@ -2039,7 +2340,27 @@ mod tests {
         // Repeated analysis replaces its own reports and cleans scratch runs.
         analyze(&dir.0, 1, 2).unwrap();
         assert!(dir.rows("errors.csv").is_empty());
-        assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 7);
+        let mut files: Vec<_> = fs::read_dir(&dir.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                "attainment.csv",
+                "empty.fgr",
+                "errors.csv",
+                "forward-summary.csv",
+                "forward.csv",
+                "readiness.csv",
+                "recordings.csv",
+                "report.html",
+                "sessions.csv",
+                "summary.csv",
+                "timeseries.csv"
+            ]
+        );
     }
 
     #[test]

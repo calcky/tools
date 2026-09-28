@@ -222,6 +222,108 @@ and `recordings.csv`, plus `errors.csv` (and `forward.csv` and `forward-summary.
 reconciliation is available). Times in these reports are nanoseconds; `NA` means
 unavailable. Server recordings can be analyzed separately after shutdown.
 
+### HTML report
+
+Clients using the default `-L events` mode also generate `report.html` and
+`timeseries.csv` after completing request drain and offline analysis. Open the
+HTML directly in a browser; its chart library and data are embedded, so it works
+offline without a web server. The terminal prints the report path. Rebuild the
+report from existing client recordings with:
+
+```sh
+flowgen -R results/flowgen-<run>
+```
+
+The report shows test parameters, recording quality and all client summary
+metrics. The four-panel overview contains RTT, sample coverage/timeouts, traffic
+(PPS and application bandwidth) and sessions/failures. One shared range slider
+controls all timelines. Avg/P90/P99 RTT are initially visible; P50/P95/Min/Max
+can be selected in the legend. Additional response-bandwidth and session
+lifecycle series remain available in their legends. Hovering and zooming link
+the time axes. Detail tabs retain latency distributions, request accounting,
+all session counters, error/anomaly diagnostics and recording files/configuration.
+Multiple runs/protocols in one directory have separate selectable views.
+Server-only analysis does not generate HTML.
+
+**Target attainment** compares configured targets with LOAD-phase Ready sessions,
+request PPS and initiated rotations/s. It excludes warmup and drain. Request PPS
+uses deduplicated Sent events inside the exact `[load_start_ns, drain_start_ns)`
+window, not averages of partially overlapping time-series buckets. The PPS target
+is `sessions * pps_per_session`, including any observed readiness deficit.
+Turnover measures initiated rotations, not successful replacements or repairs;
+a zero turnover target has no attainment percentage.
+
+The client samples the authoritative Ready gauge approximately every 100 ms into
+`readiness-samples.csv`, outside worker packet processing. Its deficit comes from
+the same Ready read. The report adds sampled Ready and deficit curves without
+replacing Live. Ready averages are time-weighted over covered LOAD intervals;
+minimum Ready and maximum deficit are sampled, not guaranteed transient extrema.
+Intervals over 500 ms are unknown and excluded, with temporal coverage reported.
+`readiness.csv` contains at most 3600 chart buckets; raw samples remain on disk.
+`attainment.csv` retains targets, actuals, coverage and availability status; its
+download icon exports those values from standalone HTML. Incomplete runs show
+observed values without certifying attainment. Old recordings without sampling
+or rotation counters show unavailable fields, never values inferred from Live.
+
+The overview explicitly labels statistics and anomalies as **full-run**, including
+all phases. Zooming changes only the displayed chart range, not those aggregates.
+The anomaly strip keeps session failures, timeout records, local limits,
+skipped request/session slots and response anomalies separate; unavailable
+counters/accounting and incomplete recordings remain visible. Its arrow opens
+the diagnostics tab. "No recorded anomalies" describes observed counters only,
+not a claim that the network is healthy.
+
+Download icons export the selected run's full summary or full time-series CSV
+directly from embedded data, with original numeric strings and nanosecond
+latencies preserved. Both CSV exports include recording/accounting status;
+zoom never truncates the CSV. Camera icons export individual charts as PNG,
+retaining the current zoom and visible series, with protocol/run, range and
+recording status in the image header. Exports work offline, including after
+sharing just the HTML file. Summary recording supports summary and attainment CSV.
+
+The chart alongside RTT shows valid sample counts and request timeout
+percentages on separate axes. Both also appear in the RTT tooltip; buckets with
+fewer than 100 valid samples are flagged there when interpreting P99. Timeout
+percentage is `timed out / (on-time replies + timed out)` for outcomes completed
+in that bucket, not the requests sent in that bucket. Pending, canceled, late
+and duplicate replies do not increase the denominator. Buckets without completed
+outcomes show a gap rather than 0%; incomplete or unavailable request accounting
+disables the percentage curve instead of treating missing records as timeouts.
+
+RTT samples are assigned to the bucket in which the first on-time response
+completed. Percentiles merge all eligible worker samples; they are not averages
+of worker or session percentiles. Each group uses fixed-width buckets of at
+least one second, increased for long runs to keep at most 3600 buckets. The
+report displays the bucket width. Rates use the full bucket width, including
+the final partial bucket. Empty latency buckets are gaps, not zero RTT.
+`timeseries.csv` retains nanosecond latency values and includes sample counts.
+`summary.csv` adds an appended `rtt_p90_ns` column; existing columns are unchanged.
+
+Response PPS and application bandwidth include late and duplicate responses,
+which do not enter the RTT distribution. On-time PPS is shown separately.
+Bandwidth excludes IP and transport headers and is not wire throughput. Live
+sessions are reconstructed from observed lifecycle events and include sessions
+opening or draining; they are not the ready-session count. Warmup/load/drain
+boundaries use actual client metadata when available; old logs only have a
+labelled configured warmup boundary. Incomplete recordings remain visibly
+`INCOMPLETE`; missing records are not interpreted as network loss. Times across
+client and server hosts are not aligned.
+
+`-L summary` produces an aggregate-only HTML report with RTT percentiles and
+event counters, explicitly without timelines, per-session distributions or
+jitter. `-L off` does not generate HTML. `-R` still requires events recording.
+Summary recording retains sampled Ready/rotation attainment, but exact LOAD
+request PPS is unavailable without event timestamps. Off recording does not
+write readiness samples.
+HTML and time-series generation runs only during client/offline reporting, not
+in the socket event loop. The embedded chart library is ECharts 5.6.0, licensed
+under Apache-2.0; its license is retained in the HTML and `assets/` sources.
+
+With Node.js, Playwright and `csv-parse` installed, validate generated reports offline with
+`node flowgen/tests/report-browser.cjs DIR/report.html`. The check covers chart
+rendering, linked zoom, mobile layout, timeout/sample-count edge cases, anomaly
+summaries, statistical scope and PNG/CSV downloads.
+
 Use `-L summary` when only bounded HDR latency summaries are needed; it writes
 per-worker summary CSV files and prints the client aggregate at shutdown. Use
 `-L off` to disable recording files and the offline event analysis path while

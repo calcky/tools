@@ -703,6 +703,10 @@ fn offline(root: &Scratch, name: &str) -> ResultOutput {
     let result = Process::spawn(root, &format!("{name}-offline"), &args).finish();
     result.success();
     assert!(result.out.contains("RTT"), "{}", result.out);
+    let dir = root.path(name);
+    let html = fs::read_to_string(dir.join("report.html")).unwrap();
+    assert!(html.contains("<script id=\"report-data\""));
+    assert!(dir.join("timeseries.csv").is_file());
     result
 }
 
@@ -1173,6 +1177,59 @@ fn loopback_recording_modes_multiworker() {
                     .unwrap()
                     .contains("complete true"));
                 let summaries = recording_artifacts(&dir, mode, Some(3));
+                assert_eq!(dir.join("report.html").is_file(), mode != "off");
+                assert_eq!(dir.join("timeseries.csv").is_file(), mode == "events");
+                assert_eq!(dir.join("readiness-samples.csv").is_file(), mode != "off");
+                assert_eq!(dir.join("attainment.csv").is_file(), mode != "off");
+                if mode != "off" {
+                    let html = fs::read_to_string(dir.join("report.html")).unwrap();
+                    let payload = html
+                        .split("<script id=\"report-data\" type=\"application/json\">\n")
+                        .nth(1)
+                        .unwrap()
+                        .split("</script>")
+                        .next()
+                        .unwrap();
+                    let data: serde_json::Value = serde_json::from_str(payload).unwrap();
+                    assert_eq!(data["mode"], mode);
+                    let load_ns: u64 = data["metadata"]["load_start_ns"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    let drain_ns: u64 = data["metadata"]["drain_start_ns"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    assert!(drain_ns > load_ns);
+                    let mut samples =
+                        csv::Reader::from_path(dir.join("readiness-samples.csv")).unwrap();
+                    let boundary = samples
+                        .records()
+                        .map(Result::unwrap)
+                        .find(|row| row[1].parse::<u64>().unwrap() == load_ns)
+                        .expect("LOAD must have an aligned Ready sample");
+                    assert_eq!(&boundary[2], data["metadata"]["sessions"].as_str().unwrap());
+                    let attainment = data["tables"]["attainment"].as_array().unwrap();
+                    assert_eq!(attainment.len(), 3);
+                    assert_eq!(attainment[0]["metric"], "ready");
+                    assert_ne!(attainment[0]["actual"], "NA");
+                    assert_ne!(attainment[2]["actual"], "NA");
+                    if mode == "events" {
+                        assert_ne!(attainment[1]["actual"], "NA");
+                        assert!(!data["tables"]["readiness"].as_array().unwrap().is_empty());
+                    } else {
+                        assert_eq!(attainment[1]["actual"], "NA");
+                    }
+                    assert_eq!(
+                        data["tables"]["summary"][0]["rtt_samples"],
+                        received.to_string()
+                    );
+                    if mode == "summary" {
+                        assert_eq!(data["tables"]["timeline"].as_array().unwrap().len(), 0);
+                    }
+                }
                 if mode == "summary" {
                     let lines: Vec<_> = result
                         .out

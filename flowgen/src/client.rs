@@ -98,6 +98,7 @@ struct Shared {
     run: u64,
     start: Instant,
     load: OnceLock<Instant>,
+    drain: OnceLock<Instant>,
     stop: Arc<AtomicBool>,
     pool: Mutex<TuplePool>,
     stats: Stats,
@@ -970,6 +971,7 @@ impl Worker {
                 self.stopping = true;
             }
             if self.stopping {
+                self.shared.drain.get_or_init(|| now);
                 let tokens =
                     shutdown.get_or_insert_with(|| self.flows.iter().map(|(t, _)| t.0).collect());
                 for _ in 0..WORK_QUANTUM {
@@ -1244,6 +1246,7 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         run,
         start: Instant::now() + Duration::from_millis(100),
         load: OnceLock::new(),
+        drain: OnceLock::new(),
         stop: stop.clone(),
         pool: Mutex::new(pool),
         stats: Stats::default(),
@@ -1256,6 +1259,13 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         control_failed: AtomicBool::new(false),
     });
     let mut workers = Vec::new();
+    let mut readiness = if recording_mode == Mode::Off {
+        None
+    } else {
+        let mut recorder = crate::attainment::Recorder::create(&o.output, run, o.sessions as u64)?;
+        recorder.sample(0, &shared.stats)?;
+        Some(recorder)
+    };
     for id in 0..o.workers {
         let target = (o.sessions + o.workers - 1 - id) / o.workers;
         let recording_path = match recording_mode {
@@ -1327,6 +1337,7 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
     let mut prev = [0; 8];
     let mut report_seq = 0;
     let mut failure = None;
+    let mut next_sample = shared.start + Duration::from_millis(100);
     while handles.iter().any(|h| !h.is_finished()) {
         if failure.is_some() {
             shared.control_failed.store(true, Relaxed);
@@ -1336,6 +1347,7 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
                 !o.duration.is_zero() && Instant::now() >= *epoch + o.duration
             });
         if ending {
+            shared.drain.get_or_init(Instant::now);
             shared.retired.lock().unwrap().clear();
         }
         if failure.is_none() && !ending {
@@ -1357,7 +1369,22 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         let now = Instant::now();
         if shared.load.get().is_none() && !stop.load(Relaxed) {
             if get(&shared.stats.ready) == o.sessions as u64 {
+                if let Some(recorder) = &mut readiness {
+                    if let Err(e) = recorder.sample(
+                        now.saturating_duration_since(shared.start).as_nanos() as u64,
+                        &shared.stats,
+                    ) {
+                        failure.get_or_insert(e);
+                        stop.store(true, Relaxed);
+                    }
+                }
+                next_sample = now + Duration::from_millis(100);
                 let _ = shared.load.set(now);
+                writeln!(
+                    metadata,
+                    "load_start_ns {}",
+                    now.saturating_duration_since(shared.start).as_nanos()
+                )?;
                 println!(
                     "LOAD | warmup complete in {:.3}s | turnover {:.2}/s",
                     now.saturating_duration_since(shared.start).as_secs_f64(),
@@ -1372,6 +1399,15 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
                 )));
                 stop.store(true, Relaxed);
             }
+        }
+        if now >= next_sample {
+            if let Some(recorder) = &mut readiness {
+                if let Err(e) = recorder.sample(net::ns(shared.start), &shared.stats) {
+                    failure.get_or_insert(e);
+                    stop.store(true, Relaxed);
+                }
+            }
+            next_sample = now + Duration::from_millis(100);
         }
         if now.duration_since(last) >= Duration::from_secs(1) {
             let dt = now.duration_since(last).as_secs_f64();
@@ -1473,6 +1509,15 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         }
     }
     // END supersedes any remaining per-flow retirement reports.
+    let measurement_end = net::ns(shared.start);
+    if let Some(mut recorder) = readiness {
+        if let Err(e) = recorder
+            .sample(measurement_end, &shared.stats)
+            .and_then(|()| recorder.finish())
+        {
+            failure.get_or_insert(e);
+        }
+    }
     shared.retired.lock().unwrap().clear();
     control.set_read_timeout(Some(o.timeout.max(wire::TEARDOWN_TIMEOUT)))?;
     control.set_write_timeout(Some(o.timeout.max(wire::TEARDOWN_TIMEOUT)))?;
@@ -1517,9 +1562,25 @@ pub fn run(o: &Config, stop: Arc<AtomicBool>) -> io::Result<()> {
         failure.is_none()
     )?;
     drop(final_counts);
+    if let Some(start) = shared.drain.get() {
+        writeln!(
+            metadata,
+            "drain_start_ns {}",
+            start.saturating_duration_since(shared.start).as_nanos()
+        )?;
+    }
+    writeln!(metadata, "end_ns {measurement_end}")?;
+    writeln!(metadata, "load_rotations {}", get(&snapshot.rotations))?;
+    writeln!(metadata, "complete {}", failure.is_none())?;
+    drop(metadata);
     match recording_mode {
         Mode::Events => crate::analyze::run(&o.output)?,
-        Mode::Summary => aggregate.unwrap().write_console(&mut io::stdout().lock())?,
+        Mode::Summary => {
+            let summary = aggregate.unwrap();
+            summary.write_console(&mut io::stdout().lock())?;
+            crate::html_report::summary(&o.output, &summary, failure.is_none())?;
+            println!("HTML report: {}", o.output.join("report.html").display());
+        }
         Mode::Off => {}
     }
     if let Some(e) = failure {
@@ -1540,6 +1601,7 @@ mod tests {
             run: 42,
             start: Instant::now(),
             load: OnceLock::new(),
+            drain: OnceLock::new(),
             stop: Arc::new(AtomicBool::new(false)),
             pool: Mutex::new(
                 TuplePool::new(vec!["127.0.0.1".parse().unwrap()], (20000, 20001), None).unwrap(),

@@ -1,8 +1,10 @@
 mod analyze;
+mod attainment;
 mod buffers;
 mod client;
 mod datagram;
 mod expiry;
+mod html_report;
 mod net;
 mod options;
 mod pending;
