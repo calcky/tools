@@ -152,6 +152,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("cttop/Cargo.toml", "rb"))["package"]["version"])')
           test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Download executables
         uses: actions/download-artifact@v8
@@ -168,10 +169,10 @@ jobs:
           assets=(dist/cttop-linux-arm dist/cttop-linux-arm64 dist/cttop-linux-x86_64)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false --title "cttop release" --notes-file cttop/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false --title "cttop v${RELEASE_VERSION}" --notes-file cttop/RELEASE.md
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --draft --verify-tag --title "cttop release" \
+              --draft --verify-tag --title "cttop v${RELEASE_VERSION}" \
               --notes-file cttop/RELEASE.md
             gh release edit "$RELEASE_TAG" --draft=false
           fi

@@ -123,6 +123,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("flowgen/Cargo.toml", "rb"))["package"]["version"])')
           test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Download executables
         uses: actions/download-artifact@v8
@@ -139,10 +140,10 @@ jobs:
           assets=(dist/flowgen-linux-arm dist/flowgen-linux-arm64 dist/flowgen-linux-x86_64)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false --title "flowgen release" --notes-file flowgen/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false --title "flowgen v${RELEASE_VERSION}" --notes-file flowgen/RELEASE.md
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --draft --verify-tag --title "flowgen release" \
+              --draft --verify-tag --title "flowgen v${RELEASE_VERSION}" \
               --notes-file flowgen/RELEASE.md
             gh release edit "$RELEASE_TAG" --draft=false
           fi

@@ -114,6 +114,7 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("irqtop/Cargo.toml", "rb"))["package"]["version"])')
           test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Download executables
         uses: actions/download-artifact@v8
@@ -130,9 +131,9 @@ jobs:
           assets=(dist/irqtop-linux-arm dist/irqtop-linux-arm64 dist/irqtop-linux-x86_64)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false --title "irqtop release"
+            gh release edit "$RELEASE_TAG" --draft=false --title "irqtop v${RELEASE_VERSION}"
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --draft --verify-tag --title "irqtop release" --generate-notes
+              --draft --verify-tag --title "irqtop v${RELEASE_VERSION}" --generate-notes
             gh release edit "$RELEASE_TAG" --draft=false
           fi

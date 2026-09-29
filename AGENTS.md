@@ -10,8 +10,11 @@
 - A tool's release contains all supported architecture binaries as assets in
   that single GitHub Release. Do not create one Release per architecture.
 - Before publishing, update the existing canonical tag and Release to point to
-  the new commit and replace their assets. Keep the tag and Release names
-  identical for the tool.
+  the new commit and replace their assets. Keep the canonical tag unchanged;
+  set the Release title to `<tool> v<version>`, for example `flowgen v0.1.4`.
+- Read the program version from the tool's `Cargo.toml` or `VERSION` file.
+  Updating a tag does not increment the version; bump the program version
+  explicitly before publishing a new version.
 - Push canonical tags individually, using an explicit force-with-lease when
   updating an existing tag. GitHub does not trigger Actions when more than
   three tags are pushed together. Verify the tag-triggered publishing run,

@@ -131,6 +131,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check release version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("netlens/Cargo.toml", "rb"))["package"]["version"])')
+          test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
       - name: Download static executables
         uses: actions/download-artifact@v8
         with:
@@ -151,10 +157,10 @@ jobs:
           assets=(dist/netlens-linux-armv7 dist/netlens-linux-arm64 dist/netlens-linux-x86_64 dist/SHA256SUMS dist/BUILDINFO.txt)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false --title "netlens release" --notes-file netlens/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false --title "netlens v${RELEASE_VERSION}" --notes-file netlens/RELEASE.md
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --draft --verify-tag --title "netlens release" \
+              --draft --verify-tag --title "netlens v${RELEASE_VERSION}" \
               --notes-file netlens/RELEASE.md
             gh release edit "$RELEASE_TAG" --draft=false
           fi
