@@ -8,7 +8,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const base = (process.argv[2] || 'http://127.0.0.1:8012').replace(/\/$/, '');
 const screenshots = fs.mkdtempSync(path.join(os.tmpdir(), 'tools-docs-screenshots-'));
 const references = ['cli', 'interfaces', 'routing', 'monitor-metrics', 'packet-path'].map(name => `netlens/docs/${name}/`);
-const routes = ['', 'getting-started/', 'irqtop/', 'netping/', 'flowgen/', 'cttop/', 'netlens/', 'bpftrace/', ...references];
+const routes = ['', 'getting-started/', 'irqtop/', 'netping/', 'flowgen/', 'cttop/', 'netlens/', 'bpftrace/', 'nettrace/', 'netcap/', ...references];
 
 (async () => {
   const browser = await chromium.launch({
@@ -44,7 +44,7 @@ const routes = ['', 'getting-started/', 'irqtop/', 'netping/', 'flowgen/', 'ctto
           assert.ok(!/\buping\b|原名|previously named/i.test(article));
           if (locale === 'en') assert.ok(!/[\u4e00-\u9fff]/.test(article));
           assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${locale}/${route} overflows at ${viewport.width}px`);
-          if (['netping/', 'flowgen/'].includes(route)) {
+          if (['netping/', 'flowgen/', 'nettrace/', 'netcap/'].includes(route)) {
             assert.ok(await page.locator('pre code').count() > 0);
             assert.ok(await page.locator('a[href$="-release"]').count() > 0);
           }
@@ -52,7 +52,7 @@ const routes = ['', 'getting-started/', 'irqtop/', 'netping/', 'flowgen/', 'ctto
       }
 
       // Switch homepages and tool pages in both directions through the real menu.
-      for (const route of ['', 'flowgen/', 'netping/', 'netlens/', ...references]) {
+      for (const route of ['', 'flowgen/', 'netping/', 'netlens/', 'nettrace/', 'netcap/', ...references]) {
         await page.goto(`${base}/${route}`);
         await page.locator('.md-select > button').click();
         await page.locator('.md-select a[hreflang="en"]').click();

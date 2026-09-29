@@ -1,0 +1,130 @@
+name: Build netcap
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "netcap/**"
+      - ".github/workflows/netcap-build.yml"
+    tags: ["netcap-release"]
+  pull_request:
+    paths:
+      - "netcap/**"
+      - ".github/workflows/netcap-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (fully static)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            runner: ubuntu-24.04-arm
+            timeout: 90
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            timeout: 45
+          - arch: x86_64
+            runner: ubuntu-24.04
+            timeout: 45
+    env:
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        if: matrix.arch == 'arm'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build static executable
+        run: bash netcap/build-static.sh "$ARCH"
+      - name: Verify executable and checksum
+        run: |
+          binary="netcap/dist/netcap-linux-$ARCH"
+          test -s "$binary"
+          (cd netcap/dist && sha256sum --check "netcap-linux-$ARCH.sha256")
+          machine=$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+          case "$ARCH:$machine" in
+            arm:ARM|arm64:AArch64|x86_64:Advanced\ Micro\ Devices\ X86-64) ;;
+            *) echo "Unexpected ELF architecture: $machine" >&2; exit 1 ;;
+          esac
+          if readelf -lW "$binary" | grep -q 'INTERP'; then
+            echo "Unexpected ELF interpreter" >&2
+            exit 1
+          fi
+          if readelf -dW "$binary" | grep -q 'NEEDED'; then
+            echo "Unexpected shared library dependency" >&2
+            exit 1
+          fi
+          file "$binary"
+      - name: Upload executable
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          path: netcap/dist/netcap-linux-${{ matrix.arch }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref == 'refs/tags/netcap-release'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read release version
+        run: |
+          version=$(tr -d '[:space:]' < netcap/VERSION)
+          test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Download executables
+        uses: actions/download-artifact@v8
+        with:
+          pattern: netcap-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Prepare release assets
+        run: |
+          for arch in arm arm64 x86_64; do
+            test -s "dist/netcap-linux-$arch"
+            (cd dist && sha256sum "netcap-linux-$arch" > "netcap-linux-$arch.sha256")
+          done
+          cp netcap/LICENSE.upstream.txt dist/netcap-LICENSE.txt
+          cp netcap/LICENSE.libpcap.txt dist/netcap-LICENSE-libpcap.txt
+          cp netcap/LICENSE.llvm.txt dist/netcap-LICENSE-llvm.txt
+          cp netcap/THIRD_PARTY.txt dist/netcap-THIRD-PARTY.txt
+      - name: Publish executables
+        run: |
+          assets=(dist/netcap-linux-arm dist/netcap-linux-arm64 dist/netcap-linux-x86_64 \
+            dist/netcap-linux-arm.sha256 dist/netcap-linux-arm64.sha256 \
+            dist/netcap-linux-x86_64.sha256 dist/netcap-LICENSE.txt \
+            dist/netcap-LICENSE-libpcap.txt dist/netcap-LICENSE-llvm.txt \
+            dist/netcap-THIRD-PARTY.txt)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false \
+              --title "netcap v${RELEASE_VERSION}" --notes-file netcap/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag \
+              --title "netcap v${RELEASE_VERSION}" --notes-file netcap/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi

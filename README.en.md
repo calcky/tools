@@ -14,6 +14,8 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [cttop](cttop/README.md) | Live conntrack monitoring, grouped drilldown and offline analysis |
 | [netlens](netlens/README.md) | Interfaces, sockets, qdisc, routes and layered network counters |
 | [bpftrace](bpftrace/README.md) | Static Linux tracing executables for three architectures |
+| [nettrace](nettrace/README.md) | Kernel skb path tracing, packet-drop diagnosis and processing latency |
+| [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 
 The repository also includes `irq-affinity.sh` for configuring IRQ/RPS.
 The affinity script changes IRQ/RPS configuration.

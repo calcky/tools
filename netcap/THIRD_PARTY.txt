@@ -1,0 +1,18 @@
+netcap static build: third-party components
+===========================================
+
+The netcap source and bundled Go dependencies are fetched from the pinned
+upstream commit documented in RELEASE.md. The upstream Apache-2.0 license,
+LLVM license, and libpcap license are provided as separate Release assets.
+The build recipe and Dockerfile identify the linked libraries.
+
+BCC 0.34.0 (Apache-2.0): https://github.com/iovisor/bcc
+LLVM/Clang 18.1.8 (Apache-2.0 with LLVM exception): https://github.com/llvm/llvm-project/tree/llvmorg-18.1.8
+libpcap 1.10.7 (BSD): https://www.tcpdump.org/release/libpcap-1.10.7.tar.gz
+libbpf 1.5.1 (BSD-2-Clause or LGPL-2.1): https://github.com/libbpf/libbpf
+musl 1.2.5 (MIT): https://musl.libc.org/
+elfutils 0.193 (LGPL/GPL components): https://sourceware.org/elfutils/
+GCC/libstdc++ 14.2.0 (GPL-3.0 with GCC Runtime Library Exception): https://gcc.gnu.org/
+
+Additional Go module licenses are available in each module's source tree;
+see go.mod in the pinned upstream netcap source for the exact module versions.

@@ -119,3 +119,5 @@ nav:
           - 指标与数据状态: netlens/docs/monitor-metrics.md
           - 数据包路径: netlens/docs/packet-path.md
       - bpftrace: bpftrace/README.md
+      - nettrace: nettrace/README.md
+      - netcap: netcap/README.md

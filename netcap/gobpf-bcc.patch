@@ -1,0 +1,10 @@
+--- a/vendor/github.com/iovisor/gobpf/bcc/module.go
++++ b/vendor/github.com/iovisor/gobpf/bcc/module.go
+@@ -227,6 +227,6 @@
+ 		logBufP = (*C.char)(unsafe.Pointer(&logBuf[0]))
+ 	}
+-	fd, err := C.bcc_func_load(bpf.p, C.int(uint32(progType)), nameCS, start, size, license, version, C.int(logLevel), logBufP, C.uint(len(logBuf)), nil)
++	fd, err := C.bcc_func_load(bpf.p, C.int(uint32(progType)), nameCS, start, size, license, version, C.int(logLevel), logBufP, C.uint(len(logBuf)), nil, C.int(-1))
+ 	if fd < 0 {
+ 		return -1, fmt.Errorf("error loading BPF program: %v", err)
+ 	}

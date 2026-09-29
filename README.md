@@ -14,6 +14,8 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [cttop](cttop/README.md) | conntrack 实时监控、聚合下钻和离线分析 |
 | [netlens](netlens/README.md) | 分层查看网口、socket、qdisc、路由及网络栈计数 |
 | [bpftrace](bpftrace/README.md) | Linux 内核动态跟踪的三架构静态程序 |
+| [nettrace](nettrace/README.md) | 内核 skb 路径跟踪、丢包诊断与处理延迟分析 |
+| [netcap](netcap/README.md) | 在指定内核函数处抓取 skb 报文，支持 pcap 输出 |
 
 另有 `irq-affinity.sh` 脚本，用于修改 IRQ/RPS 配置。
 

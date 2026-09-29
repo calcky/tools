@@ -14,7 +14,7 @@ import markdown
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = Path(os.environ.get("DOCS_SITE_DIR", ROOT / "site"))
-TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace")
+TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace", "nettrace", "netcap")
 NETLENS_REFERENCE = (
     "netlens/docs/cli",
     "netlens/docs/interfaces",
@@ -107,6 +107,18 @@ class BilingualSite(unittest.TestCase):
         for _, _, _, doc in self.pages():
             for link in doc.links:
                 self.assertNotRegex(urlsplit(link["href"]).path, r"(^|/)tasks(/|\.md|$)")
+
+    def test_nettrace_runtime_limits_are_documented(self):
+        for locale in ("zh", "en"):
+            text = (ROOT / "docs" / locale / "nettrace/README.md").read_text(encoding="utf-8")
+            for concept in ("ARMv7", "ARM64", "trampoline", "fentry/fexit", "/sys/kernel/btf/vmlinux", "debugfs", "native XDP", "--drop"):
+                self.assertIn(concept, text, (locale, concept))
+
+    def test_netcap_runtime_requirements_are_documented(self):
+        for locale in ("zh", "en"):
+            text = (ROOT / "docs" / locale / "netcap/README.md").read_text(encoding="utf-8")
+            for concept in ("BCC", "debugfs", "ARM64", "ARMv7", "tcpdump", "-w"):
+                self.assertIn(concept, text, (locale, concept))
 
     def test_screenshots_are_shared_and_linked(self):
         illustrated = {"irqtop", "netping", "flowgen", "cttop", "netlens", "netlens/docs/cli"}
