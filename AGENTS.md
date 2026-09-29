@@ -12,6 +12,10 @@
 - Before publishing, update the existing canonical tag and Release to point to
   the new commit and replace their assets. Keep the tag and Release names
   identical for the tool.
+- Push canonical tags individually, using an explicit force-with-lease when
+  updating an existing tag. GitHub does not trigger Actions when more than
+  three tags are pushed together. Verify the tag-triggered publishing run,
+  not only the branch build.
 - Existing historical tags and Releases are preserved unless the user
   explicitly requests cleanup; this policy applies to future releases.
 - Verify the release workflow, asset checksums, static linkage, and executable
