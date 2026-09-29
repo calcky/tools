@@ -9,7 +9,7 @@ on:
       - "cttop/**"
       - ".github/workflows/cttop-build.yml"
     tags:
-      - "cttop-v*"
+      - "cttop-release"
   pull_request:
     paths:
       - "cttop/**"
@@ -35,12 +35,12 @@ jobs:
           components: rustfmt, clippy
 
       - name: Check release version
-        if: startsWith(github.ref, 'refs/tags/cttop-v')
+        if: github.ref == 'refs/tags/cttop-release'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          test "$RELEASE_TAG" = "cttop-v$version"
+          test -n "$version"
 
       - name: Check formatting and lint
         run: |
@@ -135,7 +135,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cttop-v')
+    if: github.event_name == 'push' && github.ref == 'refs/tags/cttop-release'
     needs: [verify, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -151,7 +151,7 @@ jobs:
       - name: Check release version
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("cttop/Cargo.toml", "rb"))["package"]["version"])')
-          test "$RELEASE_TAG" = "cttop-v$version"
+          test -n "$version"
 
       - name: Download executables
         uses: actions/download-artifact@v8
@@ -165,8 +165,13 @@ jobs:
           for arch in arm arm64 x86_64; do
             test -s "dist/cttop-linux-$arch"
           done
-          gh release create "$RELEASE_TAG" \
-            dist/cttop-linux-arm dist/cttop-linux-arm64 dist/cttop-linux-x86_64 \
-            --draft --verify-tag --title "cttop ${RELEASE_TAG#cttop-}" \
-            --notes-file cttop/RELEASE.md
-          gh release edit "$RELEASE_TAG" --draft=false
+          assets=(dist/cttop-linux-arm dist/cttop-linux-arm64 dist/cttop-linux-x86_64)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --title "cttop release" --notes-file cttop/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --draft --verify-tag --title "cttop release" \
+              --notes-file cttop/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
