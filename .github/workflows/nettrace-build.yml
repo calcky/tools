@@ -1,0 +1,124 @@
+name: Build nettrace
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "nettrace/**"
+      - ".github/workflows/nettrace-build.yml"
+    tags: ["nettrace-release"]
+  pull_request:
+    paths:
+      - "nettrace/**"
+      - ".github/workflows/nettrace-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (fully static)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+    env:
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        if: matrix.arch == 'arm'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build static executable
+        run: ./nettrace/build-static.sh "$ARCH"
+      - name: Verify executable and checksum
+        run: |
+          binary="nettrace/dist/nettrace-linux-$ARCH"
+          test -s "$binary"
+          (cd nettrace/dist && sha256sum --check "nettrace-linux-$ARCH.sha256")
+          readelf -lW "$binary" > "$RUNNER_TEMP/elf-program-headers.txt"
+          readelf -dW "$binary" > "$RUNNER_TEMP/elf-dynamic-section.txt"
+          machine=$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+          case "$ARCH:$machine" in
+            arm:ARM|arm64:AArch64|x86_64:Advanced\ Micro\ Devices\ X86-64) ;;
+            *) echo "Unexpected ELF architecture: $machine" >&2; exit 1 ;;
+          esac
+          if grep -q 'INTERP' "$RUNNER_TEMP/elf-program-headers.txt"; then
+            echo "Unexpected ELF interpreter" >&2
+            exit 1
+          fi
+          if grep -q 'NEEDED' "$RUNNER_TEMP/elf-dynamic-section.txt"; then
+            echo "Unexpected shared library dependency" >&2
+            exit 1
+          fi
+          file "$binary"
+      - name: Upload executable
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          path: nettrace/dist/nettrace-linux-${{ matrix.arch }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref == 'refs/tags/nettrace-release'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read release version
+        run: |
+          version=$(tr -d '[:space:]' < nettrace/VERSION)
+          test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Download executables
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nettrace-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Prepare release artifacts
+        run: |
+          for arch in arm arm64 x86_64; do
+            test -s "dist/nettrace-linux-$arch"
+            (cd dist && sha256sum "nettrace-linux-$arch" > "nettrace-linux-$arch.sha256")
+          done
+          cat nettrace/licenses/*.txt > dist/nettrace-LICENSES.txt
+      - name: Publish executables
+        run: |
+          assets=(dist/nettrace-linux-arm dist/nettrace-linux-arm64 dist/nettrace-linux-x86_64 \
+            dist/nettrace-linux-arm.sha256 dist/nettrace-linux-arm64.sha256 \
+            dist/nettrace-linux-x86_64.sha256 dist/nettrace-LICENSES.txt)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false \
+              --title "nettrace v${RELEASE_VERSION}" --notes-file nettrace/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag \
+              --title "nettrace v${RELEASE_VERSION}" --notes-file nettrace/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi

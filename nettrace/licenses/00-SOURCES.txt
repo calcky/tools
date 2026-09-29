@@ -1,0 +1,37 @@
+nettrace static executable: third-party components and sources
+===========================================================
+
+nettrace 1.2.11 (Mulan PSL v2 and the notices in its upstream LICENSE):
+https://github.com/OpenCloudOS/nettrace/tree/d455f001315322db4d606a8bdf8c659ba36b269c
+
+libbpf 1.6.3 (BSD-2-Clause option of its dual license):
+https://github.com/libbpf/libbpf/tree/3b4f0ef5a6fa247ce1958d909c0e85e760249840
+
+musl 1.2.5 (MIT and the component notices in COPYRIGHT):
+https://git.musl-libc.org/cgit/musl/tag/?h=v1.2.5
+
+libelf from elfutils 0.193 (LGPL-3.0-or-later option):
+https://sourceware.org/elfutils/ftp/0.193/elfutils-0.193.tar.bz2
+Copyright (C) 1998-2010, 2012, 2015 Red Hat, Inc. and contributors.
+The LGPL text and its referenced GPL text follow in this notice bundle.
+
+zlib 1.3.2 (zlib license):
+https://github.com/madler/zlib/tree/v1.3.2
+
+zstd 1.5.7 (BSD option of its dual license):
+https://github.com/facebook/zstd/tree/v1.5.7
+
+Alpine 3.22 package recipes and patches for the bundled libc/libraries:
+https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/main/musl
+https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/main/elfutils
+https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/main/zlib
+https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.22-stable/main/zstd
+
+Build/relink recipe and the separate musl compatibility header:
+https://github.com/calcky/tools/tree/nettrace-release/nettrace
+The nettrace source is unmodified. All source and build inputs above are
+publicly available; the recipe rebuilds and relinks the complete executable.
+To use a modified library, replace its archive/headers in the build image
+before running the nettrace make command in build-static.sh.
+
+License texts and upstream notices follow.
