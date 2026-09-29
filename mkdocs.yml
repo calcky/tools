@@ -1,5 +1,5 @@
 site_name: Linux tools
-site_description: Linux 网络调试、监控与测试工具
+site_description: Linux 调试、监控与测试工具
 site_url: !ENV [READTHEDOCS_CANONICAL_URL, "http://127.0.0.1:8000/"]
 repo_url: https://github.com/calcky/tools
 repo_name: calcky/tools
@@ -7,13 +7,8 @@ edit_uri: edit/master/docs/
 docs_dir: docs
 site_dir: site
 strict: true
-watch:
-  - irqtop/README.md
-  - netping/README.md
-  - flowgen/README.md
-  - cttop/README.md
-  - netlens/README.md
-  - netlens/docs
+hooks:
+  - docs/hooks.py
 
 theme:
   name: material
@@ -41,11 +36,45 @@ theme:
     - content.action.edit
 
 plugins:
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: false
+      languages:
+        - locale: zh
+          default: true
+          name: 中文
+          build: true
+        - locale: en
+          name: English
+          build: true
+          site_description: Linux debugging, monitoring and testing tools
+          theme:
+            palette:
+              - scheme: default
+                primary: teal
+                accent: blue
+                toggle:
+                  icon: material/brightness-4
+                  name: Switch to dark mode
+              - scheme: slate
+                primary: teal
+                accent: blue
+                toggle:
+                  icon: material/brightness-7
+                  name: Switch to light mode
+          nav_translations:
+            概览: Overview
+            快速开始: Quick Start
+            安装与使用: Installation
+            工具: Tools
+            快速上手: Getting Started
+            连接与进程: Connections And Processes
+            网卡、队列与中断: Interfaces, Queues And IRQs
+            路由与连接跟踪: Routing And Conntrack
+            指标与数据状态: Metrics And Data Status
+            数据包路径: Packet Paths
   - search:
       lang: [en, zh]
-  - gen-files:
-      scripts:
-        - docs/generate.py
 
 markdown_extensions:
   - admonition
@@ -60,6 +89,10 @@ markdown_extensions:
 exclude_docs: |
   requirements.txt
   generate.py
+  hooks.py
+  development.md
+  documentation.md
+  tests/**
 
 validation:
   nav:
@@ -72,19 +105,17 @@ validation:
 nav:
   - 概览: index.md
   - 快速开始:
-      - 安装与构建: getting-started.md
-      - 常见任务: tasks.md
-  - 工具手册:
+      - 安装与使用: getting-started.md
+  - 工具:
       - irqtop / irqstat: irqtop/README.md
       - netping: netping/README.md
       - flowgen: flowgen/README.md
       - cttop: cttop/README.md
       - netlens:
-          - 使用说明: netlens/README.md
-          - 命令与交互: netlens/docs/cli.md
-          - 指标含义: netlens/docs/monitor-metrics.md
-          - 支持范围: netlens/docs/support-matrix.md
+          - 快速上手: netlens/README.md
+          - 连接与进程: netlens/docs/cli.md
+          - 网卡、队列与中断: netlens/docs/interfaces.md
+          - 路由与连接跟踪: netlens/docs/routing.md
+          - 指标与数据状态: netlens/docs/monitor-metrics.md
           - 数据包路径: netlens/docs/packet-path.md
-  - 开发与发布:
-      - 构建、检查与发布: development.md
-      - 文档维护与托管: documentation.md
+      - bpftrace: bpftrace/README.md

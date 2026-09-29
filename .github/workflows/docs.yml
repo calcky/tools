@@ -5,6 +5,8 @@ on:
     branches: [master]
     paths:
       - "docs/**"
+      - "README.md"
+      - "README.en.md"
       - "mkdocs.yml"
       - ".readthedocs.yaml"
       - ".github/workflows/docs.yml"
@@ -14,6 +16,8 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "README.md"
+      - "README.en.md"
       - "mkdocs.yml"
       - ".readthedocs.yaml"
       - ".github/workflows/docs.yml"
@@ -38,6 +42,12 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
+      - run: python3 docs/tests/test_site.py
+      - name: Check version-prefixed hosting
+        run: |
+          READTHEDOCS_CANONICAL_URL=https://docs.example.org/en/latest/ \
+            mkdocs build --strict --site-dir "$RUNNER_TEMP/docs-prefix"
+          DOCS_SITE_DIR="$RUNNER_TEMP/docs-prefix" python3 docs/tests/test_site.py
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: tools-documentation

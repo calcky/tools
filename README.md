@@ -1,72 +1,49 @@
 # Linux tools
 
-Small Linux debugging and testing tools. Each tool keeps its own source and
-documentation; generated executables and command links live in `bin/`.
+**中文** | [English](README.en.md)
 
-## Documentation
+Linux 调试、监控与测试工具集，各工具独立运行。
 
-The MkDocs documentation site is configured for Read the Docs. Start with the
-[documentation overview](docs/index.md), [installation guide](docs/getting-started.md)
-or [common tasks](docs/tasks.md). Tool manuals are generated directly from each
-tool's README to keep one source of truth.
+## 工具
 
-```sh
-python3 -m venv .venv-docs
-.venv-docs/bin/pip install -r docs/requirements.txt
-.venv-docs/bin/mkdocs serve
-```
-
-See [documentation maintenance and hosting](docs/documentation.md) for strict
-build checks and the initial Read the Docs project import.
-
-## Tools
-
-| Path | Purpose |
+| 工具 | 用途 |
 | --- | --- |
-| [irqtop/](irqtop/README.md) | Hardware IRQ, softirq and softnet monitoring; provides irqtop and irqstat |
-| [netping/](netping/README.md) | ICMP, UDP/TCP latency, live window, bandwidth/retransmission statistics and MTU/MSS inspection |
-| [flowgen/](flowgen/README.md) | TCP/UDP session load, equal-length request/response traffic and offline latency analysis |
-| [cttop/](cttop/README.md) | Live/offline conntrack aggregation, original/NAT views, traffic counters and session-state diagnostics |
-| [netlens/](netlens/README.md) | Layered network stack monitoring with interfaces, qdisc, IRQs, sockets, conntrack and routes |
-| irq-affinity.sh | IRQ affinity and RPS configuration |
-| uping/ | Standalone UDP ping |
-| udp-ping-pong/ | UDP client/server test scripts |
+| [irqtop / irqstat](irqtop/README.md) | 查看硬中断、软中断和 softnet；支持实时窗口与文本输出 |
+| [netping](netping/README.md) | ICMP、UDP、TCP 延迟与丢失检测，MTU/MSS 探测 |
+| [flowgen](flowgen/README.md) | 多会话 TCP/UDP 负载测试，RTT 统计与离线 HTML 报告 |
+| [cttop](cttop/README.md) | conntrack 实时监控、聚合下钻和离线分析 |
+| [netlens](netlens/README.md) | 分层查看网口、socket、qdisc、路由及网络栈计数 |
+| [bpftrace](bpftrace/README.md) | Linux 内核动态跟踪的三架构静态程序 |
 
-## Build
+另有 `irq-affinity.sh` 脚本，用于修改 IRQ/RPS 配置。
+
+## 文档
+
+[使用概览](docs/zh/index.md) · [快速开始](docs/zh/getting-started.md)
+
+文档站默认中文，顶部可切换英文。各工具的完整手册见上表。
+
+## 下载与安装
+
+从 [GitHub Releases](https://github.com/calcky/tools/releases) 选择工具和架构：
+`linux-x86_64`、`linux-arm64` 或 `linux-arm`（netlens 为 `linux-armv7`）。
+
+以 x86_64 的 netping 为例：
 
 ```sh
-make
-./bin/irqtop -n
-./bin/irqstat -n 1 5
-./bin/netping -h
-./bin/flowgen -h
-./bin/netlens --help
-make check
-sudo make install
+curl -fLO https://github.com/calcky/tools/releases/download/netping-release/netping-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netping-linux-x86_64 "$HOME/.local/bin/netping"
+netping -h
 ```
 
-`make` builds the Rust tools and creates:
+确保 `$HOME/.local/bin` 已加入 `PATH`。下载的是静态 Linux 程序，无需 Rust 运行环境。
 
-```text
-bin/
-  irqtop
-  irqstat -> irqtop
-  netping
-  flowgen
-  cttop
-  netlens
+也可以从源码安装单个工具（需要 Rust 和 C 编译工具链）：
+
+```sh
+git clone https://github.com/calcky/tools.git
+cd tools
+make netping
+make install-netping PREFIX="$HOME/.local"
 ```
-
-`make install` installs the built executables and relative link to
-`/usr/local/bin`. Build before installing. Use `PREFIX="$HOME/.local"` for a
-per-user install or `DESTDIR` for a staging directory. Use `make irqtop` or
-`make netping`, `make flowgen`, `make cttop` or `make netlens` to build one tool,
-and the corresponding `make install-<tool>` to install it individually.
-`make check` checks all tools;
-`make check-<tool>` checks one tool individually.
-
-The Rust tools keep implementation in `src/`, live checks in `tests/`, and
-CPU/memory measurements in `bench/`. Each tool's README documents its options,
-validation commands and build requirements. `netping -s` provides the paired
-UDP/TCP server; ICMP and ordinary TCP connection/MSS checks can use existing
-services.
