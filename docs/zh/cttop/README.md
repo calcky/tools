@@ -86,4 +86,4 @@ sudo conntrack -L | cttop summary -f
 命令行 IP/端口筛选始终匹配原始五元组，即使当前使用 NAT 视图。
 工具只读，不修改防火墙或自动启用 accounting。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0) · [完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[下载静态程序](https://github.com/calcky/tools/releases/tag/cttop-release) · [完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)

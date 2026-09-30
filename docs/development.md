@@ -30,7 +30,7 @@ make cttop
 
 各工具的 workflow 在 `.github/workflows/`，负责 musl 静态构建、验证及标签触发发布。通常提供 ARMv7、ARM64 和 x86_64 产物，各工具具体步骤以对应 workflow 为准。
 
-发布前更新该工具版本与发布说明，确认测试通过，再推送与 `Cargo.toml` 一致的标签，例如 `cttop-v0.1.0`。发布任务会在构建验证通过后上传附件。不要重复使用已发布标签。
+发布前更新该工具版本与发布说明，确认测试通过，再更新工具唯一的固定发布标签（例如 `cttop-release`）并单独推送。发布任务会在构建验证通过后替换同一条 Release 的附件；不要为每次版本更新新建 Release。更新已有标签时使用明确的 `--force-with-lease`，发布后核对标签、程序版本和全部架构附件。
 
 下载产物无需依赖 glibc；仍须核对 CPU 架构和 ARM 浮点 ABI。普通 `make` 是本机构建，不等同于 workflow 的 musl 静态构建。
 

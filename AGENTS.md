@@ -19,7 +19,10 @@
   updating an existing tag. GitHub does not trigger Actions when more than
   three tags are pushed together. Verify the tag-triggered publishing run,
   not only the branch build.
-- Existing historical tags and Releases are preserved unless the user
-  explicitly requests cleanup; this policy applies to future releases.
+- If a second Release was mistakenly created for the same tool, first publish
+  and verify the canonical Release, then delete the duplicate Release and its
+  noncanonical tag. Do not leave two visible Releases for one tool.
+- Otherwise, preserve historical tags and Releases unless the user explicitly
+  requests cleanup.
 - Verify the release workflow, asset checksums, static linkage, and executable
   version before reporting the release as complete.

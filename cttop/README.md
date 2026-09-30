@@ -31,7 +31,7 @@ namespace, an active conntrack subsystem and ctnetlink support. `sudo` is the us
 way to obtain permission. Containers need access to the namespace being diagnosed;
 running inside an ordinary container shows that container's connections only.
 The tool is named `cttop` to distinguish it from container-monitoring tools.
-The [v0.2.0 release](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0)
+The [current release](https://github.com/calcky/tools/releases/tag/cttop-release)
 provides `cttop-linux-arm` (ARMv7 hard-float),
 `cttop-linux-arm64`, and `cttop-linux-x86_64` as direct musl static binary downloads.
 Apply `chmod +x` before running. The previously published

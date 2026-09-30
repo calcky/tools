@@ -90,4 +90,4 @@ but cannot calculate bandwidth, creation rates or connection age.
 Command-line IP/port filters always match original tuples, including in the NAT view.
 The tool is read-only; it does not change firewall rules or enable accounting automatically.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0) · [Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[Static downloads](https://github.com/calcky/tools/releases/tag/cttop-release) · [Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)

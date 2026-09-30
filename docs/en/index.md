@@ -25,7 +25,7 @@ Start with [Installation](getting-started.md).
 | irqtop / irqstat | [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) |
 | netping | [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | flowgen | [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release) |
-| cttop | [cttop-v0.2.0](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0) |
+| cttop | [cttop-release](https://github.com/calcky/tools/releases/tag/cttop-release) |
 | netlens | [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
