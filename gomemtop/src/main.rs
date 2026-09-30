@@ -1,3 +1,5 @@
+mod diagnosis;
+mod process;
 mod profile;
 mod ui;
 
@@ -20,6 +22,8 @@ struct Args {
     interval: f64,
     #[arg(short = 'T', default_value_t = 10.0, value_parser = positive_seconds, value_name = "SECONDS")]
     timeout: f64,
+    #[arg(long, value_name = "PID")]
+    pid: Option<u32>,
 }
 
 fn positive_seconds(value: &str) -> Result<f64, String> {
@@ -67,6 +71,24 @@ fn fetch(url: &str, timeout: Duration, gc: bool) -> Result<Snapshot, String> {
     profile::decode(&body)
 }
 
+fn fetch_runtime(url: &str, timeout: Duration) -> Result<process::RuntimeMemory, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .redirects(0)
+        .build();
+    let response = agent
+        .get(&format!("{url}?debug=1"))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let mut text = String::new();
+    response
+        .into_reader()
+        .take(2 * 1024 * 1024)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    process::parse_runtime(&text).map_err(|e| e.to_string())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Metric {
     Inuse,
@@ -101,8 +123,19 @@ struct StackRow {
     baseline: Values,
 }
 
+struct SampleResult {
+    heap: Result<Snapshot, String>,
+    memory: Option<Result<process::Memory, String>>,
+    runtime: Option<Result<process::RuntimeMemory, String>>,
+}
+
 struct App {
     url: String,
+    pid: Option<u32>,
+    memory: Option<process::Memory>,
+    memory_error: Option<String>,
+    runtime: Option<process::RuntimeMemory>,
+    runtime_error: Option<String>,
     interval: Duration,
     timeout: Duration,
     metric: Metric,
@@ -117,18 +150,24 @@ struct App {
     previous: Option<Snapshot>,
     baseline: Option<Snapshot>,
     history: Vec<i64>,
+    diagnosis_history: Vec<diagnosis::Point>,
     successes: u64,
     failures: u64,
     last_success: Option<SystemTime>,
     error: Option<String>,
-    sender: Sender<Result<Snapshot, String>>,
-    receiver: Receiver<Result<Snapshot, String>>,
+    sender: Sender<SampleResult>,
+    receiver: Receiver<SampleResult>,
 }
 impl App {
     fn new(url: String, interval: Duration, timeout: Duration) -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
             url,
+            pid: None,
+            memory: None,
+            memory_error: None,
+            runtime: None,
+            runtime_error: None,
             interval,
             timeout,
             metric: Metric::Inuse,
@@ -143,6 +182,7 @@ impl App {
             previous: None,
             baseline: None,
             history: Vec::new(),
+            diagnosis_history: Vec::new(),
             successes: 0,
             failures: 0,
             last_success: None,
@@ -157,9 +197,17 @@ impl App {
             let timeout = self.timeout;
             let gc = self.gc;
             let sender = self.sender.clone();
+            let pid = self.pid;
             self.pending = true;
             thread::spawn(move || {
-                let _ = sender.send(fetch(&url, timeout, gc));
+                let heap = fetch(&url, timeout, gc);
+                let memory = pid.map(|pid| process::read(pid).map_err(|e| e.to_string()));
+                let runtime = pid.map(|_| fetch_runtime(&url, timeout));
+                let _ = sender.send(SampleResult {
+                    heap,
+                    memory,
+                    runtime,
+                });
             });
         }
         while let Ok(result) = self.receiver.try_recv() {
@@ -170,8 +218,40 @@ impl App {
                 self.apply_gc_toggle();
                 continue;
             }
-            match result {
+            let mut fresh_memory = None;
+            let mut fresh_runtime = None;
+            if let Some(memory) = result.memory {
+                match memory {
+                    Ok(memory) => {
+                        self.memory = Some(memory);
+                        fresh_memory = Some(memory);
+                        self.memory_error = None;
+                    }
+                    Err(error) => self.memory_error = Some(error),
+                }
+            }
+            if let Some(runtime) = result.runtime {
+                match runtime {
+                    Ok(runtime) => {
+                        self.runtime = Some(runtime);
+                        fresh_runtime = Some(runtime);
+                        self.runtime_error = None;
+                    }
+                    Err(error) => self.runtime_error = Some(error),
+                }
+            }
+            match result.heap {
                 Ok(snapshot) => {
+                    if let Some(memory) = fresh_memory {
+                        self.diagnosis_history.push(diagnosis::Point::new(
+                            memory,
+                            snapshot.total.inuse_bytes,
+                            fresh_runtime,
+                        ));
+                        if self.diagnosis_history.len() > 60 {
+                            self.diagnosis_history.remove(0);
+                        }
+                    }
                     self.previous = self.current.take();
                     if self.baseline.is_none() {
                         self.baseline = Some(snapshot.clone());
@@ -237,6 +317,10 @@ impl App {
         self.baseline = self.current.clone();
         self.previous = None;
         self.history.clear();
+        if let Some(last) = self.diagnosis_history.last().copied() {
+            self.diagnosis_history.clear();
+            self.diagnosis_history.push(last);
+        }
         if let Some(snapshot) = &self.current {
             self.history.push(self.metric.bytes(snapshot.total));
         }
@@ -256,6 +340,7 @@ impl App {
         self.previous = None;
         self.baseline = None;
         self.history.clear();
+        self.diagnosis_history.clear();
         self.selected = 0;
         self.detail_scroll = 0;
         self.next = Instant::now();
@@ -275,6 +360,7 @@ fn run() -> Result<(), String> {
         Duration::from_secs_f64(args.interval),
         Duration::from_secs_f64(args.timeout),
     );
+    app.pid = args.pid;
     let mut screen = ui::Screen::open().map_err(|e| e.to_string())?;
     loop {
         app.tick();
@@ -409,7 +495,13 @@ mod tests {
         app.toggle_gc();
         assert!(!app.gc);
         assert!(app.gc_queued);
-        app.sender.send(Err("old request".into())).unwrap();
+        app.sender
+            .send(SampleResult {
+                heap: Err("old request".into()),
+                memory: None,
+                runtime: None,
+            })
+            .unwrap();
         app.tick();
         assert!(app.gc);
         assert!(!app.gc_queued);

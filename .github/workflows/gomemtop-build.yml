@@ -5,7 +5,7 @@ on:
   push:
     branches: ["**"]
     paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
-    tags: ["gomemtop-release"]
+    tags: ["gomemtop-v*"]
   pull_request:
     paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
 
@@ -92,7 +92,7 @@ jobs:
 
   release:
     needs: [verify, build]
-    if: github.event_name == 'push' && github.ref == 'refs/tags/gomemtop-release'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gomemtop-v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,17 +106,13 @@ jobs:
       - name: Publish static binaries
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: gomemtop-release
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' gomemtop/Cargo.toml | head -1)
           test -n "$version"
+          test "$RELEASE_TAG" = "gomemtop-v$version"
           for arch in arm arm64 x86_64; do test -s "dist/gomemtop-linux-$arch"; done
           assets=(dist/gomemtop-linux-arm dist/gomemtop-linux-arm64 dist/gomemtop-linux-x86_64)
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
-          else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag \
-              --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
-          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag \
+            --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md

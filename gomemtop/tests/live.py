@@ -79,11 +79,12 @@ with tempfile.TemporaryDirectory() as directory:
     try:
         wait_until(lambda: server.poll() is None and server_ready(),
                    time.monotonic() + 10, "Go pprof ready")
-        app = subprocess.Popen([str(BIN), "-i", "0.5", "-T", "1", url],
+        app = subprocess.Popen([str(BIN), "-i", "0.5", "-T", "1", "--pid", str(server.pid), url],
                                stdin=slave, stdout=slave, stderr=slave,
                                env=dict(os.environ, TERM="xterm-256color"),
                                start_new_session=True)
-        wait_until(lambda: "stacks" in drain() and "Sample" in drain(),
+        wait_until(lambda: "stacks" in drain() and "Sample" in drain() and "RSS" in drain()
+                   and "HeapSys" in drain() and "samples | R" in drain(),
                    time.monotonic() + 8, "first profile")
         time.sleep(1.0)
         output.clear()

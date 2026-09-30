@@ -95,14 +95,25 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
         frame.render_widget(Paragraph::new("Resize terminal to at least 60x16"), area);
         return;
     }
+    let with_diagnosis = app.pid.is_some();
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(6),
-            Constraint::Min(6),
-            Constraint::Length(7),
-            Constraint::Length(2),
-        ])
+        .constraints(if with_diagnosis {
+            vec![
+                Constraint::Length(9),
+                Constraint::Min(5),
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(2),
+            ]
+        } else {
+            vec![
+                Constraint::Length(6),
+                Constraint::Min(6),
+                Constraint::Length(7),
+                Constraint::Length(2),
+            ]
+        })
         .split(area);
     let total = app.current.as_ref().map(|s| s.total).unwrap_or_default();
     let base = app.baseline.as_ref().map(|s| s.total).unwrap_or_default();
@@ -120,7 +131,7 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             "LIVE"
         }
     );
-    let summary = vec![
+    let mut summary = vec![
         line(format!("Target  {}", app.url)),
         Line::from(vec![
             Span::raw(format!(
@@ -151,6 +162,58 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             )
         )),
     ];
+    if let Some(pid) = app.pid {
+        match app.memory {
+            Some(memory) => {
+                summary.push(Line::from(vec![
+                    Span::styled(
+                        format!("RSS {pid}  {}", bytes(memory.rss as i64)),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(
+                        "  |  anon {}  file ~{}  shmem {}",
+                        bytes(memory.anonymous as i64),
+                        bytes(memory.file as i64),
+                        bytes(memory.shmem as i64)
+                    )),
+                ]));
+                summary.push(line(format!("Resident pages  private {}  shared {}  |  heap profile is not an RSS partition", bytes(memory.private as i64), bytes(memory.shared as i64))));
+            }
+            None => summary.push(line(format!("RSS {pid}  waiting for /proc sample"))),
+        }
+        summary.push(match app.runtime {
+            Some(runtime) => line(format!(
+                "Go runtime  HeapSys {}  released {}  stack {}  Sys {}",
+                bytes(runtime.heap_sys as i64),
+                bytes(runtime.heap_released as i64),
+                bytes(runtime.stack_inuse as i64),
+                bytes(runtime.sys as i64)
+            )),
+            None => line("Go runtime  waiting for pprof MemStats"),
+        });
+    }
+    if with_diagnosis {
+        let hint = crate::diagnosis::analyze(&app.diagnosis_history);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    hint.title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                line(hint.evidence),
+            ])
+            .block(
+                Block::default()
+                    .title(" Diagnostic hint ")
+                    .borders(Borders::ALL),
+            ),
+            layout[3],
+        );
+    }
     frame.render_widget(
         Paragraph::new(summary).block(Block::default().title(title).borders(Borders::ALL)),
         layout[0],
@@ -167,7 +230,7 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             .style(Style::default().fg(Color::Cyan)),
         Rect {
             x: layout[0].x + 2,
-            y: layout[0].y + 4,
+            y: layout[0].y + if app.pid.is_some() { 7 } else { 4 },
             width: layout[0].width.saturating_sub(4),
             height: 1,
         },
@@ -246,7 +309,12 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
     let mut state = TableState::default().with_selected((!rows.is_empty()).then_some(app.selected));
     frame.render_stateful_widget(table, layout[1], &mut state);
     detail(frame, layout[2], app, rows);
-    let error = app.error.as_deref().unwrap_or("No errors");
+    let error = app
+        .error
+        .as_deref()
+        .or(app.memory_error.as_deref())
+        .or(app.runtime_error.as_deref())
+        .unwrap_or("No errors");
     let help = if area.width < 95 {
         "j/k move  PgUp/Dn frames  m metric  b base  g GC  Space pause  r retry  q quit"
     } else {
@@ -257,14 +325,19 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             line(help),
             Line::from(Span::styled(
                 error.to_owned(),
-                Style::default().fg(if app.error.is_some() {
-                    Color::Red
-                } else {
-                    Color::Gray
-                }),
+                Style::default().fg(
+                    if app.error.is_some()
+                        || app.memory_error.is_some()
+                        || app.runtime_error.is_some()
+                    {
+                        Color::Red
+                    } else {
+                        Color::Gray
+                    },
+                ),
             )),
         ]),
-        layout[3],
+        layout[if with_diagnosis { 4 } else { 3 }],
     );
 }
 
@@ -327,6 +400,21 @@ mod tests {
         for (w, h) in [(80, 24), (120, 32), (55, 12)] {
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
             terminal.draw(|frame| draw(frame, &app, &[])).unwrap();
+        }
+        let mut with_pid = app;
+        with_pid.pid = Some(std::process::id());
+        with_pid.memory = Some(crate::process::read(std::process::id()).unwrap());
+        for (w, h) in [(80, 24), (120, 32)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|frame| draw(frame, &with_pid, &[])).unwrap();
+            let screen = terminal.backend().buffer();
+            let text = screen
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<Vec<_>>()
+                .join("");
+            assert!(text.contains("Diagnostic hint"));
         }
     }
     #[test]
