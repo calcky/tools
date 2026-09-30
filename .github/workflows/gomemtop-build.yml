@@ -1,0 +1,122 @@
+name: Build gomemtop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
+    tags: ["gomemtop-release"]
+  pull_request:
+    paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - name: Check
+        working-directory: gomemtop
+        run: |
+          cargo fmt -- --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            target: armv7-unknown-linux-musleabihf
+            machine: ARM
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            machine: AArch64
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+            machine: X86-64
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross 0.2.5
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+            --output cross.tar.gz
+          echo 'a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588  cross.tar.gz' | sha256sum --check
+          mkdir -p cross-bin
+          tar -xzf cross.tar.gz -C cross-bin
+          echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'x86_64'
+      - name: Build static executable
+        working-directory: gomemtop
+        run: cross build --release --locked --target '${{ matrix.target }}'
+      - name: Check ELF
+        run: |
+          binary='gomemtop/target/${{ matrix.target }}/release/gomemtop'
+          readelf -h "$binary" | grep -q 'Machine:.*${{ matrix.machine }}'
+          if readelf -lW "$binary" | grep -q INTERP; then exit 1; fi
+          if readelf -dW "$binary" 2>&1 | grep -q NEEDED; then exit 1; fi
+          install -D -m 755 "$binary" 'dist/gomemtop-linux-${{ matrix.arch }}'
+      - name: Startup smoke test
+        run: |
+          binary="$PWD/gomemtop/target/${{ matrix.target }}/release/gomemtop"
+          if [[ '${{ matrix.arch }}' == x86_64 ]]; then
+            "$binary" --version
+          else
+            docker run --rm -v "$binary:/app/gomemtop:ro" \
+              'ghcr.io/cross-rs/${{ matrix.target }}:0.2.5' \
+              '/usr/bin/qemu-${{ matrix.arch == 'arm' && 'arm' || 'aarch64' }}-static' \
+              /app/gomemtop --version
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gomemtop-linux-${{ matrix.arch }}
+          path: dist/gomemtop-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    needs: [verify, build]
+    if: github.event_name == 'push' && github.ref == 'refs/tags/gomemtop-release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gomemtop-linux-*
+          merge-multiple: true
+          path: dist
+      - name: Publish static binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: gomemtop-release
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' gomemtop/Cargo.toml | head -1)
+          test -n "$version"
+          for arch in arm arm64 x86_64; do test -s "dist/gomemtop-linux-$arch"; done
+          assets=(dist/gomemtop-linux-arm dist/gomemtop-linux-arm64 dist/gomemtop-linux-x86_64)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag \
+              --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
+          fi

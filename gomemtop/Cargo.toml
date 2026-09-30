@@ -1,0 +1,17 @@
+[package]
+name = "gomemtop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+flate2 = "1"
+prost = "0.13"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[profile.release]
+lto = true
+strip = true

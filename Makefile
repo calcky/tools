@@ -9,14 +9,16 @@ XPCAP_TARGET_DIR ?= xpcap/target
 XPCAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 XSKTOP_TARGET_DIR ?= xsktop/target
 XSKTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+GOMEMTOP_TARGET_DIR ?= gomemtop/target
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
 .PHONY: all irqtop netping flowgen cttop netlens xpcap check check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap install install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap
 
 .PHONY: xsktop check-xsktop install-xsktop
+.PHONY: gomemtop check-gomemtop install-gomemtop
 
-all: irqtop netping flowgen cttop netlens xpcap xsktop
+all: irqtop netping flowgen cttop netlens xpcap xsktop gomemtop
 
 irqtop:
 	$(CARGO) build --manifest-path irqtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(TARGET_DIR))"
@@ -47,7 +49,11 @@ xsktop:
 	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) build --manifest-path xsktop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(XSKTOP_TARGET_DIR))"
 	install -D -m 755 "$(XSKTOP_TARGET_DIR)/release/xsktop" bin/xsktop
 
-check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop
+gomemtop:
+	$(CARGO) build --manifest-path gomemtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))"
+	install -D -m 755 "$(GOMEMTOP_TARGET_DIR)/release/gomemtop" bin/gomemtop
+
+check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop check-gomemtop
 
 check-irqtop:
 	$(CARGO) fmt --manifest-path irqtop/Cargo.toml -- --check
@@ -84,7 +90,12 @@ check-xsktop:
 	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) test --manifest-path xsktop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(XSKTOP_TARGET_DIR))"
 	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) clippy --manifest-path xsktop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(XSKTOP_TARGET_DIR))" -- -D warnings
 
-install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop
+check-gomemtop:
+	$(CARGO) fmt --manifest-path gomemtop/Cargo.toml -- --check
+	$(CARGO) test --manifest-path gomemtop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))"
+	$(CARGO) clippy --manifest-path gomemtop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))" -- -D warnings
+
+install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop install-gomemtop
 
 install-irqtop:
 	test -x bin/irqtop
@@ -114,3 +125,7 @@ install-xpcap:
 install-xsktop:
 	test -x bin/xsktop
 	install -D -m 755 bin/xsktop "$(DESTDIR)$(BINDIR)/xsktop"
+
+install-gomemtop:
+	test -x bin/gomemtop
+	install -D -m 755 bin/gomemtop "$(DESTDIR)$(BINDIR)/gomemtop"
