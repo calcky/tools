@@ -1,0 +1,26 @@
+FROM --platform=linux/arm64 alpine:3.22 AS libs
+RUN apk add --no-cache elfutils-dev zlib-static argp-standalone
+
+FROM ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5 AS toolchain
+
+FROM --platform=linux/amd64 ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive \
+    CROSS_MUSL_SYSROOT=/usr/local/aarch64-linux-musl \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc \
+    CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc \
+    CXX_aarch64_unknown_linux_musl=aarch64-linux-musl-g++ \
+    BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl=--sysroot=/usr/local/aarch64-linux-musl
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential clang llvm libelf-dev zlib1g-dev libzstd-dev pkg-config && rm -rf /var/lib/apt/lists/*
+COPY --from=toolchain /usr/local/bin /usr/local/bin
+COPY --from=toolchain /usr/local/lib /usr/local/lib
+COPY --from=toolchain /usr/local/libexec /usr/local/libexec
+COPY --from=toolchain /usr/local/aarch64-linux-musl /usr/local/aarch64-linux-musl
+COPY --from=libs /usr/lib/libelf.a /usr/lib/libz.a /usr/lib/libargp.a /opt/bpftop/lib/
+COPY --from=libs /usr/include/gelf.h /usr/include/libelf.h /usr/include/argp.h /opt/bpftop/include/
+COPY --from=libs /usr/include/zlib.h /usr/include/zconf.h /opt/bpftop/include/
+RUN ar d /opt/bpftop/lib/libelf.a crc32.o
+RUN curl -fsSL https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz -o /tmp/zstd.tar.gz && \
+    echo '37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3  /tmp/zstd.tar.gz' | sha256sum -c - && \
+    tar -xzf /tmp/zstd.tar.gz -C /tmp && \
+    make -C /tmp/zstd-1.5.7/lib -j2 libzstd.a CC=aarch64-linux-musl-gcc AR=aarch64-linux-musl-ar CFLAGS='-O2 -fPIC' && \
+    cp /tmp/zstd-1.5.7/lib/libzstd.a /opt/bpftop/lib/

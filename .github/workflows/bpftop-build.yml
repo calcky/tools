@@ -1,0 +1,108 @@
+name: Build bpftop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths: ["bpftop/**", ".github/workflows/bpftop-build.yml"]
+    tags: ["bpftop-release"]
+  pull_request:
+    paths: ["bpftop/**", ".github/workflows/bpftop-build.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }} (static musl)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            platform: linux/arm/v7
+            machine: ARM
+          - arch: arm64
+            platform: linux/arm64
+            machine: AArch64
+          - arch: x86_64
+            platform: linux/amd64
+            machine: X86-64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: armv7-unknown-linux-musleabihf,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - name: Install cross 0.2.5
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+            --output cross.tar.gz
+          echo 'a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588  cross.tar.gz' | sha256sum --check
+          mkdir -p cross-bin
+          tar -xzf cross.tar.gz -C cross-bin
+          echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'x86_64'
+        with:
+          platforms: arm,arm64
+      - name: Build static executable
+        run: bash bpftop/build-static.sh '${{ matrix.arch }}'
+      - name: Verify architecture and version
+        run: |
+          binary="bpftop/dist/bpftop-linux-${{ matrix.arch }}"
+          version=$(tr -d '[:space:]' < bpftop/VERSION)
+          readelf -hW "$binary" | grep -q 'Machine:.*${{ matrix.machine }}'
+          ! readelf -lW "$binary" | grep -q INTERP
+          ! readelf -dW "$binary" 2>&1 | grep -q NEEDED
+          (cd bpftop/dist && sha256sum --check "bpftop-linux-${{ matrix.arch }}.sha256")
+          actual=$(docker run --rm --platform '${{ matrix.platform }}' \
+            -v "$PWD/$binary:/bpftop:ro" alpine:3.22 /bpftop --version)
+          test "$actual" = "bpftop $version created by Jose Fernandez"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpftop-linux-${{ matrix.arch }}
+          path: bpftop/dist/bpftop-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/tags/bpftop-release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bpftop-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Verify assets
+        run: |
+          for arch in arm arm64 x86_64; do test -s "dist/bpftop-linux-$arch"; done
+          (cd dist && sha256sum bpftop-linux-arm bpftop-linux-arm64 bpftop-linux-x86_64 > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+      - name: Publish release
+        run: |
+          version=$(tr -d '[:space:]' < bpftop/VERSION)
+          assets=(dist/bpftop-linux-{arm,arm64,x86_64} dist/SHA256SUMS bpftop/LICENSE)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false \
+              --title "bpftop v${version}" --notes-file bpftop/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag \
+              --title "bpftop v${version}" --notes-file bpftop/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
+          for name in bpftop-linux-arm bpftop-linux-arm64 bpftop-linux-x86_64 SHA256SUMS LICENSE; do
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$name"
+          done

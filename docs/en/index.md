@@ -12,6 +12,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [cttop](cttop/README.md) | Live conntrack monitoring, grouped drilldown and offline analysis |
 | [netlens](netlens/README.md) | Interfaces, sockets, qdisc, routes and layered network health |
 | [bpftrace](bpftrace/README.md) | Kernel tracing with static executables for three architectures |
+| [bpftop](bpftop/README.md) | Live eBPF program runtime, event rate and CPU estimates |
 | [nettrace](nettrace/README.md) | Kernel skb paths, packet-drop diagnosis and processing latency |
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages |
@@ -30,6 +31,7 @@ Start with [Installation](getting-started.md).
 | cttop | [cttop-release](https://github.com/calcky/tools/releases/tag/cttop-release) |
 | netlens | [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
+| bpftop | [bpftop-release](https://github.com/calcky/tools/releases/tag/bpftop-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
 | xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |

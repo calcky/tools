@@ -1,0 +1,26 @@
+FROM --platform=linux/arm/v7 alpine:3.22 AS libs
+RUN apk add --no-cache elfutils-dev zlib-static argp-standalone
+
+FROM ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:0.2.5 AS toolchain
+
+FROM --platform=linux/amd64 ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive \
+    CROSS_MUSL_SYSROOT=/usr/local/arm-linux-musleabihf \
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc \
+    CC_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-gcc \
+    CXX_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-g++ \
+    BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_musleabihf=--sysroot=/usr/local/arm-linux-musleabihf
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential clang llvm libelf-dev zlib1g-dev libzstd-dev pkg-config && rm -rf /var/lib/apt/lists/*
+COPY --from=toolchain /usr/local/bin /usr/local/bin
+COPY --from=toolchain /usr/local/lib /usr/local/lib
+COPY --from=toolchain /usr/local/libexec /usr/local/libexec
+COPY --from=toolchain /usr/local/arm-linux-musleabihf /usr/local/arm-linux-musleabihf
+COPY --from=libs /usr/lib/libelf.a /usr/lib/libz.a /usr/lib/libargp.a /opt/bpftop/lib/
+COPY --from=libs /usr/include/gelf.h /usr/include/libelf.h /usr/include/argp.h /opt/bpftop/include/
+COPY --from=libs /usr/include/zlib.h /usr/include/zconf.h /opt/bpftop/include/
+RUN ar d /opt/bpftop/lib/libelf.a crc32.o
+RUN curl -fsSL https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz -o /tmp/zstd.tar.gz && \
+    echo '37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3  /tmp/zstd.tar.gz' | sha256sum -c - && \
+    tar -xzf /tmp/zstd.tar.gz -C /tmp && \
+    make -C /tmp/zstd-1.5.7/lib -j2 libzstd.a CC=arm-linux-musleabihf-gcc AR=arm-linux-musleabihf-ar CFLAGS='-O2 -fPIC' && \
+    cp /tmp/zstd-1.5.7/lib/libzstd.a /opt/bpftop/lib/
