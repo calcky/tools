@@ -99,9 +99,9 @@ jobs:
       - name: Startup smoke test
         working-directory: xpcap
         run: |
-          cross run --release --locked --target '${{ matrix.target }}' -- -h
+          ../dist/xpcap-linux-${{ matrix.arch }} -h
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          test "$(cross run --release --locked --target '${{ matrix.target }}' -- -V)" = "xpcap $version"
+          test "$(../dist/xpcap-linux-${{ matrix.arch }} -V)" = "xpcap $version"
       - uses: actions/upload-artifact@v4
         with:
           name: xpcap-linux-${{ matrix.arch }}
