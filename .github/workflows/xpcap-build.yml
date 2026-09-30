@@ -98,7 +98,10 @@ jobs:
           install -D -m 755 "$binary" 'dist/xpcap-linux-${{ matrix.arch }}'
       - name: Startup smoke test
         working-directory: xpcap
-        run: cross run --release --locked --target '${{ matrix.target }}' -- -h
+        run: |
+          cross run --release --locked --target '${{ matrix.target }}' -- -h
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$(cross run --release --locked --target '${{ matrix.target }}' -- -V)" = "xpcap $version"
       - uses: actions/upload-artifact@v4
         with:
           name: xpcap-linux-${{ matrix.arch }}
@@ -133,6 +136,12 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("xpcap/Cargo.toml", "rb"))["package"]["version"])')
           assets=(dist/xpcap-linux-{arm,arm64,x86_64} dist/xpcap-linux-{arm,arm64,x86_64}.sha256)
-          gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag \
-            --title "xpcap v${version}" --notes-file xpcap/RELEASE.md
-          gh release edit "$RELEASE_TAG" --draft=false
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false \
+              --title "xpcap v${version}" --notes-file xpcap/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag \
+              --title "xpcap v${version}" --notes-file xpcap/RELEASE.md
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
