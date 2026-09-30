@@ -1,4 +1,4 @@
-use crate::event::Event;
+use crate::event::{Event, FLAG_COOKED};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
@@ -39,11 +39,19 @@ impl<W: Write> PcapngWriter<W> {
     }
 
     pub fn add_interface(&mut self, ifindex: u32, name: &str) -> io::Result<()> {
+        self.add_interface_with_link(ifindex, name, 1)
+    }
+
+    pub fn add_cooked_any(&mut self) -> io::Result<()> {
+        self.add_interface_with_link(0, "any", 113)
+    }
+
+    fn add_interface_with_link(&mut self, ifindex: u32, name: &str, link: u16) -> io::Result<()> {
         if self.interfaces.contains_key(&ifindex) {
             return Ok(());
         }
         let mut body = Vec::new();
-        body.extend_from_slice(&1u16.to_le_bytes()); // Ethernet
+        body.extend_from_slice(&link.to_le_bytes());
         body.extend_from_slice(&0u16.to_le_bytes());
         body.extend_from_slice(&9216u32.to_le_bytes());
         Self::option(&mut body, 2, name.as_bytes()); // if_name
@@ -56,7 +64,12 @@ impl<W: Write> PcapngWriter<W> {
     }
 
     pub fn write_event(&mut self, event: &Event<'_>, wall_ns: u64, extra: &str) -> io::Result<()> {
-        let Some(&id) = self.interfaces.get(&event.ifindex) else {
+        let ifindex = if event.flags & FLAG_COOKED != 0 {
+            0
+        } else {
+            event.ifindex
+        };
+        let Some(&id) = self.interfaces.get(&ifindex) else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unknown interface",
@@ -154,6 +167,40 @@ mod tests {
             .any(|part| part == b"stage=pcap-out queue"));
         assert!(bytes.windows(7).any(|part| part == b"queue=-"));
         assert!(bytes.windows(12).any(|part| part == b"direction=tx"));
+    }
+
+    #[test]
+    fn any_packet_uses_cooked_link_type_and_xsk_keeps_ethernet() {
+        let mut bytes = Vec::new();
+        let mut writer = PcapngWriter::new(&mut bytes).unwrap();
+        writer.add_cooked_any().unwrap();
+        writer.add_interface(3, "eth0").unwrap();
+        writer
+            .write_event(&Event::cooked_packet(3, 1, false, 16, &[0u8; 16]), 1, "")
+            .unwrap();
+        let mut xsk = Event::packet(3, 2, false, 14, &[0u8; 14]);
+        xsk.stage = Stage::XskRx;
+        writer.write_event(&xsk, 2, "").unwrap();
+        let mut offset = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset + 8..offset + 10].try_into().unwrap()),
+            113
+        );
+        offset += u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset + 8..offset + 10].try_into().unwrap()),
+            1
+        );
+        offset += u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        assert_eq!(
+            u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()),
+            0
+        );
+        offset += u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        assert_eq!(
+            u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()),
+            1
+        );
     }
 
     #[test]

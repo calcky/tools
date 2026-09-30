@@ -14,6 +14,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [bpftrace](bpftrace/README.md) | Kernel tracing with static executables for three architectures |
 | [nettrace](nettrace/README.md) | Kernel skb paths, packet-drop diagnosis and processing latency |
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
+| [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages |
 | [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership |
 
 Start with [Installation](getting-started.md).

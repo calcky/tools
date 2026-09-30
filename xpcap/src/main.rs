@@ -1,10 +1,11 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
+use libbpf_rs::btf::{types::Func, Btf};
 use libbpf_rs::{MapCore, MapFlags, Object, ObjectBuilder, PerfBufferBuilder};
 use pktbaffle::{LinkType, Target};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
@@ -36,37 +37,73 @@ struct Selection {
     pcap_out: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+struct PrintOptions {
+    verbose: bool,
+    link_header: bool,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Capture XDP, AF_XDP and conventional interface packets"
+    about = "Capture XSK and PCAP packets, with optional XDP/redirect stages",
+    after_help = "Filter examples (tcpdump syntax):\n  xpcap -i any tcp and port 443\n  xpcap -i eth0 udp and dst port 53\n  xpcap -i eth0 -S xsk host 192.0.2.1 and port 9000"
 )]
 struct Args {
-    #[arg(short = 'i', required = true, value_name = "IFACE")]
+    #[arg(
+        short = 'i',
+        required = true,
+        value_name = "IFACE",
+        help = "Interface (repeatable), or any for all interfaces"
+    )]
     interfaces: Vec<String>,
-    #[arg(short = 'w', value_name = "FILE")]
+    #[arg(short = 'w', value_name = "FILE", help = "Also write PCAPNG to FILE")]
     write: Option<PathBuf>,
     #[arg(
+        short = 'v',
+        help = "Show IP header details (TTL, ID, flags, checksum)"
+    )]
+    verbose: bool,
+    #[arg(
+        short = 'e',
+        help = "Show link header (Ethernet/VLAN, or cooked SLL for any)"
+    )]
+    link_header: bool,
+    #[arg(
+        short = 'S',
         long,
         value_name = "LIST",
-        help = "Comma-separated xdp-in,xdp-out,redirect,xsk,pcap; xsk-in/out and pcap-in/out are also accepted"
+        help = "Stages: xsk,pcap,xdp-in,xdp-out,redirect (comma-separated)"
     )]
     stage: Option<String>,
-    #[arg(short = 'Q', value_enum, default_value_t = Direction::Inout, value_name = "DIRECTION")]
+    #[arg(short = 'Q', value_enum, default_value_t = Direction::Inout, value_name = "DIRECTION", help = "Capture direction")]
     direction: Direction,
-    #[arg(long, value_name = "QUEUE")]
+    #[arg(
+        short = 'q',
+        long,
+        value_name = "QUEUE",
+        help = "XDP/XSK queue (not PCAP)"
+    )]
     queue: Option<u32>,
-    #[arg(short = 'c', value_name = "EVENTS")]
+    #[arg(
+        short = 'c',
+        value_name = "EVENTS",
+        help = "Stop after EVENTS across all stages"
+    )]
     count: Option<u64>,
-    #[arg(short = 'T', value_name = "SECONDS")]
+    #[arg(short = 'T', value_name = "SECONDS", help = "Stop after SECONDS")]
     duration: Option<u64>,
-    #[arg(short = 's', default_value_t = 2048, value_parser = clap::value_parser!(u32).range(1..=9216))]
+    #[arg(short = 's', default_value_t = 2048, value_parser = clap::value_parser!(u32).range(1..=9216), help = "Captured bytes per packet (1-9216)")]
     snaplen: u32,
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..), help = "Keep about one in N matching packets per stage")]
+    #[arg(short = 'm', long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..), help = "Keep about one in N matching packets per stage")]
     sample: u32,
-    #[arg(long = "perf-pages", default_value_t = 256, value_parser = clap::value_parser!(usize))]
+    #[arg(short = 'B', long = "perf-pages", default_value_t = 256, value_parser = clap::value_parser!(usize), help = "Perf buffer pages per CPU (power of two)")]
     buffer_pages: usize,
-    #[arg(value_name = "FILTER", trailing_var_arg = true)]
+    #[arg(
+        value_name = "FILTER",
+        trailing_var_arg = true,
+        help = "Tcpdump-style packet filter"
+    )]
     filter: Vec<String>,
 }
 
@@ -95,7 +132,7 @@ fn selection(args: &Args) -> Result<Selection> {
             }
         }
     } else {
-        selected.mask = Stage::ALL.iter().fold(0, |mask, stage| mask | stage.bit());
+        selected.mask = Stage::XskRx.bit() | Stage::XskTx.bit();
         selected.pcap_in = true;
         selected.pcap_out = true;
     }
@@ -144,6 +181,10 @@ impl Config {
 }
 
 fn build_config(args: &Args) -> Result<(Config, HashMap<u32, String>, Selection)> {
+    let any = capture_any(args);
+    if args.interfaces.iter().any(|name| name == "any") && !any {
+        bail!("-i any cannot be combined with other interfaces");
+    }
     if args.interfaces.len() > MAX_IFACES {
         bail!("at most {MAX_IFACES} interfaces are supported");
     }
@@ -159,13 +200,26 @@ fn build_config(args: &Args) -> Result<(Config, HashMap<u32, String>, Selection)
         ..Config::default()
     };
     let mut names = HashMap::new();
-    for name in &args.interfaces {
+    let interface_names = if any {
+        let mut found = Vec::new();
+        for entry in fs::read_dir("/sys/class/net").context("enumerate interfaces")? {
+            found.push(entry?.file_name().to_string_lossy().into_owned());
+        }
+        found.sort();
+        found
+    } else {
+        args.interfaces.clone()
+    };
+    for name in &interface_names {
         let c_name = CString::new(name.as_str()).context("interface contains NUL")?;
         let index = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
         if index == 0 {
+            if any {
+                continue;
+            }
             bail!("interface {name} not found");
         }
-        if names.insert(index, name.clone()).is_none() {
+        if names.insert(index, name.clone()).is_none() && !any {
             config.ifindexes[config.ifcount as usize] = index;
             config.ifcount += 1;
         }
@@ -177,6 +231,22 @@ fn build_config(args: &Args) -> Result<(Config, HashMap<u32, String>, Selection)
         config.has_queue = 1;
     }
     Ok((config, names, selected))
+}
+
+fn capture_any(args: &Args) -> bool {
+    args.interfaces.len() == 1 && args.interfaces[0] == "any"
+}
+
+fn interface_name(ifindex: u32) -> String {
+    let mut buffer = [0; libc::IF_NAMESIZE];
+    let name = unsafe { libc::if_indextoname(ifindex, buffer.as_mut_ptr()) };
+    if name.is_null() {
+        format!("ifindex-{ifindex}")
+    } else {
+        unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 struct Loaded {
@@ -415,19 +485,45 @@ fn xdp_target(id: u32) -> Result<(OwnedFd, String)> {
     if result != 0 {
         return Err(std::io::Error::last_os_error()).context("read XDP program info");
     }
-    let end = info
-        .name
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(info.name.len());
-    let name = String::from_utf8_lossy(
-        &info.name[..end]
-            .iter()
-            .map(|byte| *byte as u8)
-            .collect::<Vec<_>>(),
-    )
-    .to_string();
+    if info.btf_id == 0 || info.nr_func_info == 0 {
+        bail!("XDP program {id} has no function BTF for fentry/fexit");
+    }
+
+    let mut first_func = libbpf_sys::bpf_func_info::default();
+    let mut query = libbpf_sys::bpf_prog_info {
+        func_info_rec_size: std::mem::size_of::<libbpf_sys::bpf_func_info>() as u32,
+        func_info: (&mut first_func as *mut libbpf_sys::bpf_func_info) as u64,
+        nr_func_info: 1,
+        ..Default::default()
+    };
+    let mut len = std::mem::size_of_val(&query) as u32;
+    if unsafe {
+        libbpf_sys::bpf_obj_get_info_by_fd(
+            fd.as_raw_fd(),
+            (&mut query as *mut libbpf_sys::bpf_prog_info).cast(),
+            &mut len,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error()).context("read XDP function info");
+    }
+    if query.nr_func_info == 0 || first_func.insn_off != 0 {
+        bail!("XDP program {id} has no entry function info");
+    }
+    let btf = Btf::from_prog_id(id).context("load XDP program BTF")?;
+    let name = btf_func_name(&btf, first_func.type_id)?;
     Ok((fd, name))
+}
+
+fn btf_func_name(btf: &Btf<'_>, type_id: u32) -> Result<String> {
+    let func = btf
+        .type_by_id::<Func<'_>>(type_id.into())
+        .ok_or_else(|| anyhow!("BTF type {type_id} is not a function"))?;
+    Ok(func
+        .name()
+        .ok_or_else(|| anyhow!("BTF function {type_id} has no name"))?
+        .to_string_lossy()
+        .into_owned())
 }
 
 fn redirect_map_type(id: u32) -> String {
@@ -487,8 +583,68 @@ fn local_time(ns: u64) -> String {
     )
 }
 
+fn format_capture_line(
+    names: &HashMap<u32, String>,
+    show_interface: bool,
+    options: PrintOptions,
+    event: &Event<'_>,
+    wall: u64,
+    extra: &str,
+) -> String {
+    let interface = if show_interface {
+        format!(
+            "{:<12} ",
+            names.get(&event.ifindex).map(String::as_str).unwrap_or("?")
+        )
+    } else {
+        String::new()
+    };
+    let queue = if event.stage == Stage::Pcap || event.queue == u32::MAX {
+        "q-".to_string()
+    } else {
+        format!("q{}", event.queue)
+    };
+    let (source, direction) = match event.stage {
+        Stage::XskRx => ("XSK", "IN"),
+        Stage::XskTx => ("XSK", "OUT"),
+        Stage::Pcap if event.action == 1 => ("PCAP", "OUT"),
+        Stage::Pcap => ("PCAP", "IN"),
+        Stage::XdpIn => ("XDP-IN", "IN"),
+        Stage::XdpOut => ("XDP-OUT", "IN"),
+        Stage::Redirect => ("REDIRECT", "IN"),
+    };
+    let suffix = if extra.is_empty() {
+        String::new()
+    } else {
+        format!(" {extra}")
+    };
+    let link = if options.link_header {
+        event.link_detail()
+    } else {
+        String::new()
+    };
+    format!(
+        "{} {}{:<4} {:<8} {:<3} {}{}{}{}",
+        local_time(wall),
+        interface,
+        queue,
+        source,
+        direction,
+        link,
+        event.terminal_detail_with_options(options.verbose),
+        if event.packet.len() < event.packet_len as usize {
+            format!(" (captured {})", event.packet.len())
+        } else {
+            String::new()
+        },
+        suffix
+    )
+}
+
 struct CaptureState {
     names: HashMap<u32, String>,
+    show_interface: bool,
+    print_options: PrintOptions,
     map_types: HashMap<u32, String>,
     writer: Option<PcapngWriter<BufWriter<File>>>,
     offset: i128,
@@ -526,12 +682,10 @@ impl CaptureState {
         if self.limit.is_some_and(|limit| self.total >= limit) {
             return;
         }
+        self.names
+            .entry(event.ifindex)
+            .or_insert_with(|| interface_name(event.ifindex));
         let wall = (event.ts_ns as i128 + self.offset).max(0) as u64;
-        let ifname = self
-            .names
-            .get(&event.ifindex)
-            .map(String::as_str)
-            .unwrap_or("?");
         let extra = if event.stage == Stage::Redirect
             && event.flags & xpcap::event::FLAG_REDIRECT_META != 0
         {
@@ -542,27 +696,24 @@ impl CaptureState {
         } else {
             ""
         };
-        let detail = event.terminal_detail();
         println!(
-            "{} {:<9} {:<12} q{:>2} {:>5}/{:<5} {}{}",
-            local_time(wall),
-            event.label(),
-            ifname,
-            if event.stage == Stage::Pcap {
-                "-".to_string()
-            } else {
-                event.queue.to_string()
-            },
-            event.packet.len(),
-            event.packet_len,
-            detail,
-            if extra.is_empty() {
-                String::new()
-            } else {
-                format!(" {extra}")
-            }
+            "{}",
+            format_capture_line(
+                &self.names,
+                self.show_interface,
+                self.print_options,
+                &event,
+                wall,
+                extra,
+            )
         );
         if let Some(writer) = &mut self.writer {
+            if event.flags & xpcap::event::FLAG_COOKED == 0 {
+                let name = &self.names[&event.ifindex];
+                if let Err(error) = writer.add_interface(event.ifindex, name) {
+                    self.error = Some(error.to_string());
+                }
+            }
             if let Err(error) = writer.write_event(&event, wall, extra) {
                 self.error = Some(error.to_string());
             }
@@ -574,6 +725,7 @@ impl CaptureState {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let any = capture_any(&args);
     let (config, names, selected) = build_config(&args)?;
     let expression = if args.filter.is_empty() {
         None
@@ -583,6 +735,15 @@ fn main() -> Result<()> {
             pktbaffle::compile(&text, LinkType::Ethernet, Target::Classic)
                 .map_err(|error| anyhow!("invalid capture filter '{text}': {error}"))?,
         )
+    };
+    let cooked_expression = if any && !args.filter.is_empty() {
+        let text = args.filter.join(" ");
+        Some(
+            pktbaffle::compile(&text, LinkType::LinuxSll, Target::Classic)
+                .map_err(|error| anyhow!("invalid any-interface filter '{text}': {error}"))?,
+        )
+    } else {
+        None
     };
     let bpf_mask = Stage::ALL[..5]
         .iter()
@@ -601,12 +762,22 @@ fn main() -> Result<()> {
         None => None,
     };
     if let Some(writer) = &mut writer {
-        for (&index, name) in &names {
-            writer.add_interface(index, name)?;
+        if any && config.stage_mask & Stage::Pcap.bit() != 0 {
+            writer.add_cooked_any()?;
+        }
+        if !any {
+            for (&index, name) in &names {
+                writer.add_interface(index, name)?;
+            }
         }
     }
     let state = Rc::new(RefCell::new(CaptureState {
         names,
+        show_interface: any || args.interfaces.len() > 1,
+        print_options: PrintOptions {
+            verbose: args.verbose,
+            link_header: args.link_header,
+        },
         map_types: HashMap::new(),
         writer,
         offset,
@@ -625,25 +796,36 @@ fn main() -> Result<()> {
     }
     let mut sockets = Vec::new();
     if config.stage_mask & Stage::Pcap.bit() != 0 {
-        for &ifindex in state.borrow().names.keys() {
+        let indexes: Vec<u32> = if any {
+            vec![0]
+        } else {
+            state.borrow().names.keys().copied().collect()
+        };
+        for ifindex in indexes {
+            let name = if any {
+                "any".to_string()
+            } else {
+                state.borrow().names[&ifindex].clone()
+            };
             match PacketSocket::open(
                 ifindex,
                 args.snaplen,
                 selected.pcap_in,
                 selected.pcap_out,
-                expression.as_ref(),
+                if any {
+                    cooked_expression.as_ref()
+                } else {
+                    expression.as_ref()
+                },
                 args.sample,
             ) {
                 Ok(socket) => {
-                    coverage.attached(Stage::Pcap, state.borrow().names[&ifindex].clone());
+                    coverage.attached(Stage::Pcap, name.clone());
                     sockets.push(socket);
                 }
                 Err(error) => {
-                    coverage.missing(Stage::Pcap, state.borrow().names[&ifindex].clone());
-                    unavailable.push(format!(
-                        "{} pcap: {error:#}",
-                        state.borrow().names[&ifindex]
-                    ));
+                    coverage.missing(Stage::Pcap, name.clone());
+                    unavailable.push(format!("{name} pcap: {error:#}"));
                 }
             }
         }
@@ -698,6 +880,13 @@ fn main() -> Result<()> {
             Stage::XskTx.bit(),
         ),
     ];
+    let xsk_build_skb_present = if bpf_available && config.stage_mask & Stage::XskTx.bit() != 0 {
+        Btf::from_vmlinux()
+            .ok()
+            .map(|btf| btf.type_by_name::<Func<'_>>("xsk_build_skb").is_some())
+    } else {
+        None
+    };
     let mut redirect_data_loaded = false;
     for (label, programs, bit) in groups {
         if !bpf_available || config.stage_mask & bit == 0 {
@@ -713,13 +902,18 @@ fn main() -> Result<()> {
         } else {
             Stage::XskTx
         };
-        match load_group(
-            programs,
-            &config,
-            &filter_value,
-            None,
-            loaded.first().map(|item: &Loaded| &item._object),
-        ) {
+        let result = if label == "xsk-tx-generic" && xsk_build_skb_present == Some(false) {
+            Err(anyhow!("xsk_build_skb absent from kernel BTF"))
+        } else {
+            load_group(
+                programs,
+                &config,
+                &filter_value,
+                None,
+                loaded.first().map(|item: &Loaded| &item._object),
+            )
+        };
+        match result {
             Ok(item) => {
                 coverage.attached(stage, label);
                 if label.starts_with("redirect-") && label != "redirect-metadata" {
@@ -743,9 +937,7 @@ fn main() -> Result<()> {
                     Ok(item) => {
                         coverage.attached(Stage::XskTx, "generic direct-xmit fallback");
                         coverage.missing(Stage::XskTx, label);
-                        eprintln!(
-                            "xsk-tx: xsk_build_skb unavailable; using generic direct-xmit attempts"
-                        );
+                        eprintln!("note: xsk-tx: {error:#}; using generic direct-xmit attempts");
                         loaded.push(item);
                     }
                     Err(fallback_error) => {
@@ -1003,11 +1195,22 @@ fn capture_done(state: &CaptureState, args: &Args, started: Instant) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn config_layout() {
         assert_eq!(std::mem::size_of::<Config>(), 92);
+    }
+
+    #[test]
+    fn btf_function_name_is_not_truncated_to_program_name_limit() {
+        let btf = Btf::from_raw("capture", BPF_OBJECT).unwrap().unwrap();
+        let func = btf
+            .type_by_name::<Func<'_>>("xsk_generic_xmit_entry")
+            .unwrap();
+        let name = btf_func_name(&btf, func.type_id().into()).unwrap();
+        assert_eq!(name, "xsk_generic_xmit_entry");
+        assert!(name.len() > 15);
     }
 
     #[test]
@@ -1043,7 +1246,53 @@ mod tests {
     }
 
     #[test]
+    fn short_options_and_filter_examples_are_in_help() {
+        let mut command = Args::command();
+        let help = command.render_help().to_string();
+        for text in [
+            "-S, --stage",
+            "-q, --queue",
+            "-m, --sample",
+            "-B, --perf-pages",
+            "-v",
+            "-e",
+            "xpcap -i any tcp and port 443",
+            "xpcap -i eth0 udp and dst port 53",
+            "xpcap -i eth0 -S xsk host 192.0.2.1 and port 9000",
+        ] {
+            assert!(help.contains(text), "missing from help: {text}");
+        }
+        for example in [
+            "tcp and port 443",
+            "udp and dst port 53",
+            "host 192.0.2.1 and port 9000",
+        ] {
+            pktbaffle::compile(example, LinkType::Ethernet, Target::Classic).unwrap();
+        }
+        let args = Args::try_parse_from([
+            "xpcap", "-i", "lo", "-S", "pcap", "-q", "3", "-m", "4", "-B", "64", "tcp", "and",
+            "port", "443",
+        ])
+        .unwrap();
+        assert_eq!(args.stage.as_deref(), Some("pcap"));
+        assert_eq!(args.queue, Some(3));
+        assert_eq!(args.sample, 4);
+        assert_eq!(args.buffer_pages, 64);
+        assert_eq!(args.filter.join(" "), "tcp and port 443");
+        let args = Args::try_parse_from(["xpcap", "-i", "lo", "-ev"]).unwrap();
+        assert!(args.link_header && args.verbose);
+    }
+
+    #[test]
     fn selects_packet_only_or_mixed_capture() {
+        let defaults = Args::try_parse_from(["xpcap", "-i", "lo"]).unwrap();
+        let (config, _, selected) = build_config(&defaults).unwrap();
+        assert_eq!(
+            config.stage_mask,
+            Stage::XskRx.bit() | Stage::XskTx.bit() | Stage::Pcap.bit()
+        );
+        assert!(selected.pcap_in && selected.pcap_out);
+
         let packet_only = Args::try_parse_from(["xpcap", "-i", "lo", "--stage", "pcap"]).unwrap();
         let (config, _, selected) = build_config(&packet_only).unwrap();
         assert_eq!(config.stage_mask, Stage::Pcap.bit());
@@ -1086,5 +1335,40 @@ mod tests {
         let args =
             Args::try_parse_from(["xpcap", "-i", "lo", "--stage", "xsk-in", "-Q", "out"]).unwrap();
         assert!(build_config(&args).is_err());
+    }
+
+    #[test]
+    fn capture_lines_show_interface_only_for_multiple_interfaces() {
+        let mut names = HashMap::from([(1, "eth0".to_string())]);
+        let packet = [0u8; 14];
+        let mut event = Event::packet(1, 0, false, packet.len() as u32, &packet);
+        let single = format_capture_line(&names, false, PrintOptions::default(), &event, 0, "");
+        assert!(!single.contains("eth0"));
+        assert!(single.contains("q-   PCAP     IN"));
+        assert!(single.contains("length 14"));
+        let truncated = Event::packet(1, 0, false, 100, &packet);
+        let line = format_capture_line(&names, false, PrintOptions::default(), &truncated, 0, "");
+        assert!(line.contains("frame length 100 (captured 14)"));
+        assert!(!line.contains("partial"));
+
+        names.insert(2, "eth1".to_string());
+        let multiple = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
+        assert!(multiple.contains("eth0         q-   PCAP     IN"));
+
+        event.stage = Stage::XskRx;
+        event.queue = 3;
+        event.ifindex = 2;
+        let xsk = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
+        assert!(xsk.contains("eth1         q3   XSK      IN"));
+    }
+
+    #[test]
+    fn any_is_wildcard_and_cannot_be_combined() {
+        let args = Args::try_parse_from(["xpcap", "-i", "any"]).unwrap();
+        let (config, names, _) = build_config(&args).unwrap();
+        assert_eq!(config.ifcount, 0);
+        assert!(!names.is_empty());
+        let mixed = Args::try_parse_from(["xpcap", "-i", "any", "-i", "lo"]).unwrap();
+        assert!(build_config(&mixed).is_err());
     }
 }

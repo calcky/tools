@@ -149,6 +149,7 @@ static __always_inline bool sample_matches(struct capture_config *cfg, __u8 stag
 
 static __always_inline bool location_matches(struct capture_config *cfg, __u32 ifindex, __u32 queue) {
     if (!cfg || (cfg->has_queue && cfg->queue != queue)) return false;
+    if (cfg->ifcount == 0) return true;
     for (int i = 0; i < XPCAP_MAX_IFACES; i++) {
         if ((__u32)i >= cfg->ifcount) break;
         if (cfg->ifindexes[i] == ifindex) return true;

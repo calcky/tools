@@ -16,6 +16,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [bpftrace](bpftrace/README.md) | Linux 内核动态跟踪的三架构静态程序 |
 | [nettrace](nettrace/README.md) | 内核 skb 路径跟踪、丢包诊断与处理延迟分析 |
 | [netcap](netcap/README.md) | 在指定内核函数处抓取 skb 报文，支持 pcap 输出 |
+| [xpcap](xpcap/README.md) | 同时抓取 AF_XDP 与常规网口流量，支持 XDP 阶段和 PCAPNG |
 | [xsktop](xsktop/README.md) | 实时查看 AF_XDP socket 的队列流量、错误和进程归属 |
 | [gomemtop](gomemtop/README.md) | 从 Go pprof 服务采样，实时分析堆占用与增长调用栈 |
 

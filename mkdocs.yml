@@ -121,4 +121,5 @@ nav:
       - bpftrace: bpftrace/README.md
       - nettrace: nettrace/README.md
       - netcap: netcap/README.md
+      - xpcap: xpcap/README.md
       - xsktop: xsktop/README.md

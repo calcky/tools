@@ -6,6 +6,9 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 pub struct PacketSocket {
     fd: OwnedFd,
     ifindex: u32,
+    cooked: bool,
+    filter: Option<Program>,
+    snaplen: usize,
     buffer: Vec<u8>,
     capture_in: bool,
     capture_out: bool,
@@ -45,10 +48,16 @@ impl PacketSocket {
             bail!("sample period must be positive");
         }
         let protocol = (libc::ETH_P_ALL as u16).to_be() as i32;
+        let cooked = ifindex == 0;
         let fd = unsafe {
             libc::socket(
                 libc::AF_PACKET,
-                libc::SOCK_RAW | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                (if cooked {
+                    libc::SOCK_DGRAM
+                } else {
+                    libc::SOCK_RAW
+                }) | libc::SOCK_NONBLOCK
+                    | libc::SOCK_CLOEXEC,
                 protocol,
             )
         };
@@ -76,7 +85,7 @@ impl PacketSocket {
         {
             return Err(std::io::Error::last_os_error()).context("bind AF_PACKET socket");
         }
-        if let Some(program) = expression {
+        if let Some(program) = expression.filter(|_| !cooked) {
             let instructions = program.instructions();
             let length = u16::try_from(instructions.len()).context("capture filter too large")?;
             let filter = libc::sock_fprog {
@@ -100,7 +109,10 @@ impl PacketSocket {
         Ok(Self {
             fd,
             ifindex,
-            buffer: vec![0; snaplen as usize],
+            cooked,
+            filter: if cooked { expression.cloned() } else { None },
+            snaplen: snaplen as usize,
+            buffer: vec![0; if cooked { 9216 } else { snaplen as usize }],
             capture_in,
             capture_out,
             sample,
@@ -171,30 +183,78 @@ impl PacketSocket {
                 self.filtered += 1;
                 continue;
             }
+            let packet = &self.buffer[..(length as usize).min(self.buffer.len())];
+            let cooked_packet = self.cooked.then(|| cooked_frame(&address, packet));
+            let packet = cooked_packet.as_deref().unwrap_or(packet);
+            if self.filter.as_ref().is_some_and(|filter| {
+                !filter
+                    .as_classic()
+                    .expect("classic packet filter")
+                    .matches(packet)
+            }) {
+                self.filtered += 1;
+                continue;
+            }
             if !take_sample(&mut self.sample_next, self.sample) {
                 self.sampled += 1;
                 continue;
             }
-            let packet = &self.buffer[..(length as usize).min(self.buffer.len())];
             let mut now: libc::timespec = unsafe { std::mem::zeroed() };
             if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) } < 0 {
                 return Err(std::io::Error::last_os_error()).context("packet timestamp");
             }
             let timestamp = now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64;
-            record(Event::packet(
-                self.ifindex,
-                timestamp,
-                outgoing,
-                length as u32,
-                packet,
-            ));
+            let captured = &packet[..packet.len().min(self.snaplen)];
+            let packet_len = length as u32 + if self.cooked { 16 } else { 0 };
+            let event = if self.cooked {
+                Event::cooked_packet(
+                    address.sll_ifindex as u32,
+                    timestamp,
+                    outgoing,
+                    packet_len,
+                    captured,
+                )
+            } else {
+                Event::packet(self.ifindex, timestamp, outgoing, packet_len, captured)
+            };
+            record(event);
         }
         Ok(())
     }
 }
 
+fn cooked_frame(address: &libc::sockaddr_ll, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(16 + payload.len());
+    frame.extend_from_slice(&(address.sll_pkttype as u16).to_be_bytes());
+    frame.extend_from_slice(&address.sll_hatype.to_be_bytes());
+    frame.extend_from_slice(&(address.sll_halen as u16).to_be_bytes());
+    frame.extend_from_slice(&address.sll_addr);
+    frame.extend_from_slice(&address.sll_protocol.to_ne_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
 #[cfg(test)]
 mod tests {
+    use super::cooked_frame;
+
+    #[test]
+    fn cooked_header_preserves_protocol_and_address() {
+        let address = libc::sockaddr_ll {
+            sll_family: libc::AF_PACKET as u16,
+            sll_protocol: 0x0800u16.to_be(),
+            sll_ifindex: 7,
+            sll_hatype: libc::ARPHRD_ETHER,
+            sll_pkttype: libc::PACKET_OUTGOING,
+            sll_halen: 6,
+            sll_addr: [1, 2, 3, 4, 5, 6, 0, 0],
+        };
+        let frame = cooked_frame(&address, &[0x45, 0]);
+        assert_eq!(&frame[..2], &[0, libc::PACKET_OUTGOING]);
+        assert_eq!(&frame[14..16], &[0x08, 0x00]);
+        assert_eq!(&frame[16..], &[0x45, 0]);
+    }
+
     #[test]
     fn samples_first_and_every_nth_packet() {
         let mut next = 0;
