@@ -31,6 +31,21 @@ Use arrow keys or `j/k` to select a socket, click a Q/rate/error column header t
 | `-d SEC` | Sampling interval, at least 0.1 seconds |
 | `-c N` | Print N samples without requiring a terminal |
 
+## Errors and Events
+
+The detail counters come from the kernel AF_XDP socket diagnostic interface, not NIC hardware statistics:
+
+| Metric | Meaning |
+| --- | --- |
+| `RX dropped` | Packet could not enter XSK for another RX reason, such as no available UMEM frame or a packet larger than the configured frame; RX-ring-full drops are separate. |
+| `RX invalid` | Kernel-reported invalid RX-ring descriptors; not the count of invalid fill-ring entries. |
+| `RX ring full` | The XSK RX ring had no free slot. Check whether the application drains it promptly. |
+| `TX invalid` | Invalid TX descriptor, such as an invalid UMEM address or length. |
+| `UMEM fill empty` | No usable fill-ring entry when the kernel requested an RX buffer. This counts checks, not necessarily one lost packet per increment; sockets sharing a UMEM pool share this counter. |
+| `TX empty` | No usable descriptor when the kernel checked the TX ring. This is not a transmit error or packet-loss count. |
+
+`rate/s` is the increase since the previous sample divided by elapsed time; `total` is the cumulative kernel count for that socket (or shared UMEM pool). `-` in `rate/s` means no valid previous sample, not zero. The table's `RX err/s` sums the first three RX errors; `TX err/s` counts only `TX invalid`. Empty-ring events are excluded. These are XSK-side counters, not NIC errors or on-wire loss.
+
 ## Notes
 
 - Requires Linux 6.6+, `CONFIG_XDP_SOCKETS_DIAG`, kernel BTF and fentry/fexit BPF support; root or equivalent capabilities are normally needed.

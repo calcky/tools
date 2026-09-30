@@ -59,6 +59,26 @@ if sockets share that pool, it is not attributable to one socket. Process
 ownership is best-effort when
 `/proc` is restricted or file descriptors are shared.
 
+## Error and event counters
+
+The detail pane reads kernel AF_XDP diagnostic counters, not NIC error counters:
+
+| Field | Meaning |
+| --- | --- |
+| `RX dropped` | Packet could not enter XSK for another RX reason, such as no available UMEM frame or a packet too large for the configured frame. RX-ring-full drops are counted separately. |
+| `RX invalid` | Kernel-reported invalid RX-ring descriptors. This is not the count of invalid UMEM fill-ring entries. |
+| `RX ring full` | Packet could not be queued because the XSK RX ring had no free slot. The application may not be draining it fast enough. |
+| `TX invalid` | TX descriptor rejected as invalid (for example, an invalid UMEM address or length). |
+| `UMEM fill empty` | Kernel tried to obtain an RX buffer but found no usable fill-ring entry. This counts empty-buffer checks, not necessarily one lost packet per increment. A shared UMEM pool shares this counter. |
+| `TX empty` | Kernel checked the TX ring and found no usable descriptor. This is an empty-ring event, not a transmit error or packet-loss count. |
+
+`rate/s` is the counter increase over the last measured interval divided by its
+elapsed time; `total` is the cumulative kernel counter for that socket (or
+shared UMEM pool). `-` in `rate/s` means no valid previous sample, not zero.
+The table's `RX err/s` sums the first three RX rows; `TX err/s` is `TX invalid`
+only. Empty-ring events are excluded from both error rates. These counters
+describe XSK-side behavior, not NIC hardware errors or on-wire loss.
+
 With `-c N`, xsktop takes one baseline snapshot and then prints N interval
 samples to standard output. Each sample lists sockets in the selected network
 namespace, their traffic/error/event rates, and the actual elapsed interval.
