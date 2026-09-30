@@ -11,7 +11,7 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use diag::{Errors, Socket};
-use libbpf_rs::{Link, MapCore, MapFlags, Object, ObjectBuilder};
+use libbpf_rs::{libbpf_sys, Link, MapCore, MapFlags, Object, ObjectBuilder};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -198,6 +198,55 @@ struct Item {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XdpMode {
+    None,
+    Skb,
+    Drv,
+    Hw,
+    Multi,
+    Unknown,
+}
+
+impl XdpMode {
+    fn from_attached(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Drv,
+            2 => Self::Skb,
+            3 => Self::Hw,
+            4 => Self::Multi,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Skb => "skb",
+            Self::Drv => "drv",
+            Self::Hw => "hw",
+            Self::Multi => "multi",
+            Self::Unknown => "?",
+        }
+    }
+}
+
+fn query_xdp_mode(ifindex: u32) -> XdpMode {
+    let Ok(ifindex) = i32::try_from(ifindex) else {
+        return XdpMode::Unknown;
+    };
+    let mut opts = libbpf_sys::bpf_xdp_query_opts {
+        sz: std::mem::size_of::<libbpf_sys::bpf_xdp_query_opts>() as libbpf_sys::size_t,
+        ..Default::default()
+    };
+    if unsafe { libbpf_sys::bpf_xdp_query(ifindex, 0, &mut opts) } == 0 {
+        XdpMode::from_attached(opts.attach_mode)
+    } else {
+        XdpMode::Unknown
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Sort {
     Queue,
     RxPps,
@@ -231,8 +280,8 @@ impl Sort {
             Self::TxErrors => "TX err/s",
         }
     }
-    fn column(self) -> usize {
-        match self {
+    fn column(self, xdp_column: bool) -> usize {
+        let column = match self {
             Self::Queue => 1,
             Self::RxPps => 3,
             Self::TxPps => 4,
@@ -240,6 +289,11 @@ impl Sort {
             Self::TxMbps => 6,
             Self::RxErrors => 7,
             Self::TxErrors => 8,
+        };
+        if xdp_column && column > 0 {
+            column + 1
+        } else {
+            column
         }
     }
     fn value(self, item: &Item) -> Option<f64> {
@@ -270,6 +324,7 @@ impl Sort {
 
 struct Screen {
     items: Vec<Item>,
+    xdp_modes: HashMap<u32, XdpMode>,
     selected: usize,
     scroll: usize,
     sort: Sort,
@@ -289,6 +344,7 @@ impl Screen {
     fn new(args: Args) -> Self {
         Self {
             items: Vec::new(),
+            xdp_modes: HashMap::new(),
             selected: 0,
             scroll: 0,
             sort: Sort::Queue,
@@ -314,6 +370,18 @@ impl Screen {
             socket.iface = diag::iface_name(socket.ifindex);
             *counts.entry((socket.ifindex, socket.queue)).or_default() += 1;
         }
+        let xdp_modes = sockets
+            .iter()
+            .filter(|socket| {
+                self.filter
+                    .as_ref()
+                    .is_none_or(|name| name == &socket.iface)
+            })
+            .map(|socket| socket.ifindex)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|ifindex| (ifindex, query_xdp_mode(ifindex)))
+            .collect();
         let inodes: HashSet<u32> = sockets
             .iter()
             .filter_map(|socket| {
@@ -382,6 +450,7 @@ impl Screen {
         }
         sort_items(&mut items, self.sort, self.sort_descending);
         self.items = items;
+        self.xdp_modes = xdp_modes;
         self.previous = previous;
         self.sampled = Some(now);
         self.sample_interval = elapsed;
@@ -401,6 +470,13 @@ impl Screen {
         } else {
             self.selected = self.selected.saturating_sub(1);
         }
+    }
+
+    fn xdp_mode(&self, ifindex: u32) -> XdpMode {
+        self.xdp_modes
+            .get(&ifindex)
+            .copied()
+            .unwrap_or(XdpMode::Unknown)
     }
 
     fn set_sort(&mut self, sort: Sort) {
@@ -476,21 +552,25 @@ fn screen_panes(area: Rect) -> [Rect; 4] {
     .areas(area)
 }
 
-fn table_widths(width: u16) -> [Constraint; 10] {
-    let lengths = if width >= 100 {
-        [15, 4, 5, 9, 9, 10, 10, 8, 8, 10]
+fn table_widths(width: u16) -> Vec<Constraint> {
+    let lengths: &[u16] = if width >= 100 {
+        &[12, 5, 3, 5, 9, 9, 10, 10, 8, 8, 9]
     } else if width >= 80 {
-        [11, 3, 4, 7, 7, 8, 8, 6, 6, 9]
+        &[11, 3, 4, 7, 7, 8, 8, 6, 6, 9]
     } else {
-        [11, 2, 4, 6, 6, 7, 7, 5, 5, 10]
+        &[11, 2, 4, 6, 6, 7, 7, 5, 5, 10]
     };
-    std::array::from_fn(|index| {
-        if index == 9 {
-            Constraint::Min(lengths[index])
-        } else {
-            Constraint::Length(lengths[index])
-        }
-    })
+    lengths
+        .iter()
+        .enumerate()
+        .map(|(index, length)| {
+            if index + 1 == lengths.len() {
+                Constraint::Min(*length)
+            } else {
+                Constraint::Length(*length)
+            }
+        })
+        .collect()
 }
 
 fn header_sort(area: Rect, column: u16, row: u16) -> Option<Sort> {
@@ -513,6 +593,14 @@ fn header_sort(area: Rect, column: u16, row: u16) -> Option<Sort> {
     let index = columns
         .iter()
         .position(|rect| rect.x <= column && column < rect.right())?;
+    if area.width >= 100 && index == 1 {
+        return None;
+    }
+    let index = if area.width >= 100 && index > 1 {
+        index - 1
+    } else {
+        index
+    };
     match index {
         1 => Some(Sort::Queue),
         3 => Some(Sort::RxPps),
@@ -624,10 +712,11 @@ fn text_sample(screen: &Screen, index: u32, count: u32) -> String {
         screen.items.len()
     );
     output.push_str(&format!(
-        "{:<14} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}\n",
+        "{:<14} {:<5} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}\n",
         "IFACE",
+        "XDP",
         "Q",
-        "MODE",
+        "XSK",
         "RXpps",
         "TXpps",
         "RXMb/s",
@@ -685,8 +774,9 @@ fn text_sample(screen: &Screen, index: u32, count: u32) -> String {
         };
         let status = if item.ambiguous { " [ambiguous]" } else { "" };
         output.push_str(&format!(
-            "{:<14} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}{}\n",
+            "{:<14} {:<5} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}{}\n",
             item.socket.iface,
+            screen.xdp_mode(item.socket.ifindex).label(),
             item.socket.queue,
             if item.socket.zero_copy { "zc" } else { "copy" },
             rx_pps,
@@ -783,10 +873,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         Paragraph::new(header).block(Block::default().title(" xsktop ").borders(Borders::ALL)),
         panes[0],
     );
-    let header_labels = [
+    let mut header_labels = vec![
         "IFACE",
         "Q",
-        "MODE",
+        "XSK",
         "RX pps",
         "TX pps",
         "RX Mb/s",
@@ -803,9 +893,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         },
         "PROCESS",
     ];
+    if area.width >= 100 {
+        header_labels.insert(1, "XDP");
+    }
     let header = Row::new(header_labels.into_iter().enumerate().map(|(index, label)| {
         let cell = Cell::from(label);
-        if index == screen.sort.column() {
+        if index == screen.sort.column(area.width >= 100) {
             cell.style(
                 Style::default()
                     .fg(Color::Yellow)
@@ -873,6 +966,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
                 mode.into(),
                 show(item.delta.rx_packets),
             ];
+            if area.width >= 100 {
+                cells.insert(
+                    1,
+                    if first_in_group {
+                        screen.xdp_mode(item.socket.ifindex).label().into()
+                    } else {
+                        String::new()
+                    },
+                );
+            }
             cells.push(if !hidden && item.delta.tx_unmeasured_packets > 0 {
                 format!(">={}", show(item.delta.tx_packets))
             } else {
@@ -910,8 +1013,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
                             .add_modifier(Modifier::BOLD),
                     )
                 } else if idx != screen.selected
-                    && ((column == 7 && item.errors.rx_total() > 0)
-                        || (column == 8 && item.errors.tx_total() > 0))
+                    && ((column == Sort::RxErrors.column(area.width >= 100)
+                        && item.errors.rx_total() > 0)
+                        || (column == Sort::TxErrors.column(area.width >= 100)
+                            && item.errors.tx_total() > 0))
                 {
                     cell.style(
                         Style::default()
@@ -1046,15 +1151,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
             ),
             columns[1],
         );
+        let xsk_mode = if socket.zero_copy {
+            "zero-copy"
+        } else {
+            "copy"
+        };
         let config = format!(
-            "UMEM {} KiB  |  chunk {} B  |  {}\nRings  RX {}  TX {}  FILL {}  CQ {}",
+            "XDP {}  |  XSK {xsk_mode}  |  UMEM {} KiB  |  chunk {} B\nRings  RX {}  TX {}  FILL {}  CQ {}",
+            screen.xdp_mode(socket.ifindex).label(),
             socket.umem_bytes / 1024,
             socket.chunk_bytes,
-            if socket.zero_copy {
-                "zero-copy"
-            } else {
-                "copy"
-            },
             socket.rings[0],
             socket.rings[1],
             socket.rings[2],
@@ -1149,6 +1255,20 @@ fn main() {
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn xdp_attach_modes_have_distinct_labels() {
+        for (raw, expected) in [
+            (0, "none"),
+            (1, "drv"),
+            (2, "skb"),
+            (3, "hw"),
+            (4, "multi"),
+            (5, "?"),
+        ] {
+            assert_eq!(XdpMode::from_attached(raw).label(), expected);
+        }
+    }
 
     #[test]
     fn counter_delta_does_not_underflow_on_reset() {
@@ -1281,12 +1401,22 @@ mod tests {
             ambiguous: false,
             ready: true,
         });
+        screen.xdp_modes.insert(0, XdpMode::Drv);
         let output = text_sample(&screen, 1, 1);
         assert!(output.contains("sample 1/1  interval 2.000s"));
         assert!(output.contains("RXERR/s"));
         assert!(output.contains("TXERR/s"));
         assert!(output.contains("FILL_EMPTY/s"));
         assert!(output.contains("TX_EMPTY/s"));
+        assert_eq!(
+            &output
+                .lines()
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>()[..4],
+            &["IFACE", "XDP", "Q", "XSK"]
+        );
         assert!(output.contains("eth0"));
         assert!(output.contains("10"));
         assert!(output.contains("worker(42)"));
@@ -1296,7 +1426,10 @@ mod tests {
             .unwrap()
             .split_whitespace()
             .collect::<Vec<_>>();
-        assert_eq!(&fields[7..11], &["2", "3", "10", "4"]);
+        assert_eq!(fields[1], "drv");
+        assert_eq!(fields[2], "0");
+        assert_eq!(fields[3], "copy");
+        assert_eq!(&fields[8..12], &["2", "3", "10", "4"]);
     }
 
     #[test]
@@ -1560,15 +1693,21 @@ mod tests {
                 Sort::RxErrors,
                 Sort::TxErrors,
             ] {
-                let column = columns[sort.column()];
+                let column = columns[sort.column(width >= 100)];
                 assert_eq!(header_sort(area, column.x, column.y), Some(sort));
                 assert_eq!(header_sort(area, column.right() - 1, column.y), Some(sort));
                 assert_eq!(header_sort(area, column.x, column.y + 1), None);
             }
             assert_eq!(header_sort(area, columns[0].x, inner.y), None);
-            assert_eq!(header_sort(area, columns[2].x, inner.y), None);
-            assert_eq!(header_sort(area, columns[9].x, inner.y), None);
-            assert_eq!(header_sort(area, columns[3].right(), inner.y), None);
+            assert_eq!(
+                header_sort(area, columns[if width >= 100 { 3 } else { 2 }].x, inner.y),
+                None
+            );
+            assert_eq!(header_sort(area, columns.last().unwrap().x, inner.y), None);
+            assert_eq!(header_sort(area, columns[2].right(), inner.y), None);
+            if width >= 100 {
+                assert_eq!(header_sort(area, columns[1].x, inner.y), None);
+            }
 
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
             let mut screen = Screen::new(Args {
@@ -1579,7 +1718,8 @@ mod tests {
             screen.set_sort(Sort::RxPps);
             terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
             assert_eq!(
-                terminal.backend().buffer()[(columns[3].x, inner.y)].fg,
+                terminal.backend().buffer()[(columns[Sort::RxPps.column(width >= 100)].x, inner.y)]
+                    .fg,
                 Color::Yellow
             );
         }
@@ -1594,6 +1734,7 @@ mod tests {
                 delay: 1.0,
                 count: None,
             });
+            screen.xdp_modes.insert(0, XdpMode::Drv);
             for queue in [0, 1] {
                 screen.items.push(Item {
                     socket: Socket {
@@ -1632,6 +1773,15 @@ mod tests {
             };
             let header = line(4);
             assert!(header.contains("RX pps"), "width {width}");
+            assert_eq!(header.contains("XDP"), width >= 100, "width {width}");
+            if width >= 100 {
+                assert!(
+                    header.find("IFACE") < header.find("XDP")
+                        && header.find("XDP") < header.find("Q")
+                        && header.find("Q") < header.find("XSK"),
+                    "width {width}"
+                );
+            }
             assert!(header.contains("TX pps"), "width {width}");
             assert!(header.contains("RX Mb/s"), "width {width}");
             assert!(
@@ -1645,15 +1795,22 @@ mod tests {
             assert!(line(5).contains("0.008"), "width {width}");
             assert!(line(5).contains("0.004"), "width {width}");
             let data_row = line(5).chars().skip(1).collect::<String>();
-            assert_eq!(
-                &data_row.split_whitespace().collect::<Vec<_>>()[..9],
-                &["eth0", "0", "copy", "0", "0", "0.008", "0.004", "3", "4"],
-                "width {width}"
-            );
+            let fields = data_row.split_whitespace().collect::<Vec<_>>();
+            let expected = if width >= 100 {
+                vec![
+                    "eth0", "drv", "0", "copy", "0", "0", "0.008", "0.004", "3", "4",
+                ]
+            } else {
+                vec!["eth0", "0", "copy", "0", "0", "0.008", "0.004", "3", "4"]
+            };
+            assert_eq!(&fields[..expected.len()], expected, "width {width}");
             assert_eq!(
                 line(6).chars().skip(1).take(11).collect::<String>(),
                 "           "
             );
+            if width >= 100 {
+                assert!(!line(6).contains("drv"), "width {width}");
+            }
             assert!(line(6).contains("0.008"), "width {width}");
         }
     }
@@ -1695,8 +1852,8 @@ mod tests {
         assert!(line(1).contains("RX >=0 pps  TX >=0 pps"));
         let data_row = line(5).chars().skip(1).collect::<String>();
         assert_eq!(
-            data_row.split_whitespace().take(8).collect::<Vec<_>>(),
-            ["eth0", "0", "copy", "-", "-", "-", "-", "7"]
+            data_row.split_whitespace().take(9).collect::<Vec<_>>(),
+            ["eth0", "?", "0", "copy", "-", "-", "-", "-", "7"]
         );
     }
 
@@ -1709,6 +1866,7 @@ mod tests {
                 delay: 1.0,
                 count: None,
             });
+            screen.xdp_modes.insert(0, XdpMode::Skb);
             screen.items.push(Item {
                 socket: Socket {
                     iface: "eth0".into(),
@@ -1766,9 +1924,10 @@ mod tests {
                 "width {width}"
             );
             assert!(
-                lines
-                    .iter()
-                    .any(|line| line.contains("UMEM 16384 KiB") && line.contains("chunk 4096 B")),
+                lines.iter().any(|line| line.contains("XDP skb")
+                    && line.contains("XSK copy")
+                    && line.contains("UMEM 16384 KiB")
+                    && line.contains("chunk 4096 B")),
                 "width {width}"
             );
             assert!(

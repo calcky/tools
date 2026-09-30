@@ -23,6 +23,8 @@ xsktop -c 5 -d 1 > log   # five plain-text samples
 
 Use arrow keys or `j/k` to select a socket, click a Q/rate/error column header to sort (click again to reverse), `s` to cycle sort columns, and `q` to quit. Metric sorts rank interfaces by their aggregate rate, then queues within each interface.
 
+`XDP` is the interface's XDP program attachment mode: `skb` (generic), `drv` (native), `hw` (offload), `multi` (multiple modes), or `none`; `?` means the query failed or returned an unknown mode. This is separate from the socket's `XSK` mode (`copy/zc`, indicating zero-copy). The XDP mode always appears in details, appears in the table at terminal widths of at least 100 columns, and is included in text samples.
+
 ## Key Options
 
 | Option | Meaning |

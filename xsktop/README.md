@@ -56,6 +56,12 @@ by the sum of their available per-second socket rates, then ranks queues within
 each interface by the same metric. Interfaces and queues with no available rate
 remain last; traffic hidden for shared interface/queues is not included in the
 interface sum. The selected socket stays selected when rows move.
+`XDP` is the interface's XDP program attachment mode: `skb` (generic), `drv`
+(native), `hw` (offload), `multi` (multiple modes), or `none`. `?` means the
+kernel query failed or returned an unrecognized mode. This is distinct from
+the per-socket `XSK` mode (`copy` or `zc` for zero-copy). The XDP mode appears
+in Config at every supported terminal width, in the main table at 100 columns
+or wider, and in every text sample. It is refreshed with each sample.
 The table always shows adjacent
 RX/TX packet rates, adjacent RX/TX megabits per second, separate RX/TX error
 rates, and the process holding the socket. RX errors sum dropped packets,

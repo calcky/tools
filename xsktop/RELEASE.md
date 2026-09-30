@@ -1,6 +1,11 @@
 AF_XDP socket monitoring with live per-queue RX/TX packet and byte rates,
 separate RX/TX error rates, UMEM/ring configuration, and best-effort process
-ownership. The live details view now separates errors, events, and configuration.
+ownership. This release adds the interface's XDP attachment mode (`skb`,
+`drv`, `hw`, `multi`, or `none`) alongside the socket's `copy`/`zc` mode.
+XDP appears after the interface in the wide live table and text samples,
+and remains visible in the details pane on narrow terminals.
+
+The live details view separates errors, events, and configuration.
 Click a Q, rate, or error column header to sort; click again to reverse.
 Metric sorts rank interfaces by their aggregate available rate, then queues
 within each interface. Use `s` to change sort columns without a mouse, or
