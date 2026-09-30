@@ -5,7 +5,7 @@ on:
   push:
     branches: ["**"]
     paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
-    tags: ["gomemtop-v*"]
+    tags: ["gomemtop-release"]
   pull_request:
     paths: ["gomemtop/**", "Makefile", ".github/workflows/gomemtop-build.yml"]
 
@@ -69,21 +69,27 @@ jobs:
       - name: Check ELF
         run: |
           binary='gomemtop/target/${{ matrix.target }}/release/gomemtop'
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' gomemtop/Cargo.toml | head -1)
           readelf -h "$binary" | grep -q 'Machine:.*${{ matrix.machine }}'
           if readelf -lW "$binary" | grep -q INTERP; then exit 1; fi
           if readelf -dW "$binary" 2>&1 | grep -q NEEDED; then exit 1; fi
+          if [[ '${{ matrix.arch }}' == x86_64 ]]; then
+            test "$("$binary" --version)" = "gomemtop $version"
+          fi
           install -D -m 755 "$binary" 'dist/gomemtop-linux-${{ matrix.arch }}'
       - name: Startup smoke test
         run: |
           binary="$PWD/gomemtop/target/${{ matrix.target }}/release/gomemtop"
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' gomemtop/Cargo.toml | head -1)
           if [[ '${{ matrix.arch }}' == x86_64 ]]; then
-            "$binary" --version
+            actual=$("$binary" --version)
           else
-            docker run --rm -v "$binary:/app/gomemtop:ro" \
+            actual=$(docker run --rm -v "$binary:/app/gomemtop:ro" \
               'ghcr.io/cross-rs/${{ matrix.target }}:0.2.5' \
               '/usr/bin/qemu-${{ matrix.arch == 'arm' && 'arm' || 'aarch64' }}-static' \
-              /app/gomemtop --version
+              /app/gomemtop --version)
           fi
+          test "$actual" = "gomemtop $version"
       - uses: actions/upload-artifact@v4
         with:
           name: gomemtop-linux-${{ matrix.arch }}
@@ -92,7 +98,7 @@ jobs:
 
   release:
     needs: [verify, build]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gomemtop-v')
+    if: github.event_name == 'push' && github.ref == 'refs/tags/gomemtop-release'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,13 +112,29 @@ jobs:
       - name: Publish static binaries
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: gomemtop-release
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' gomemtop/Cargo.toml | head -1)
           test -n "$version"
-          test "$RELEASE_TAG" = "gomemtop-v$version"
           for arch in arm arm64 x86_64; do test -s "dist/gomemtop-linux-$arch"; done
           assets=(dist/gomemtop-linux-arm dist/gomemtop-linux-arm64 dist/gomemtop-linux-x86_64)
-          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag \
-            --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
+          (cd dist && sha256sum gomemtop-linux-arm gomemtop-linux-arm64 gomemtop-linux-x86_64 > SHA256SUMS)
+          assets+=(dist/SHA256SUMS)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag \
+              --title "gomemtop v$version" --notes-file gomemtop/RELEASE.md
+          fi
+          for name in gomemtop-linux-arm gomemtop-linux-arm64 gomemtop-linux-x86_64 SHA256SUMS; do
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$name"
+          done
+      - name: Remove duplicate v0.2.0 release after canonical verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view gomemtop-v0.2.0 >/dev/null 2>&1; then
+            gh release delete gomemtop-v0.2.0 --yes --cleanup-tag
+          fi

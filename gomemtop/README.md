@@ -19,7 +19,7 @@ go func() { log.Println(http.ListenAndServe("127.0.0.1:6060", nil)) }()
 
 Download `gomemtop-linux-x86_64`, `gomemtop-linux-arm64`, or
 `gomemtop-linux-arm` from the
-[gomemtop v0.2.0 release](https://github.com/calcky/tools/releases/tag/gomemtop-v0.2.0),
+[gomemtop release](https://github.com/calcky/tools/releases/tag/gomemtop-release),
 make it executable, and run it in an interactive terminal.
 
 ```sh
