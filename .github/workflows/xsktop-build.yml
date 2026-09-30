@@ -103,7 +103,9 @@ jobs:
         run: cross build --release --locked --target '${{ matrix.target }}'
       - name: Startup check
         working-directory: xsktop
-        run: cross run --release --locked --target '${{ matrix.target }}' -- -V
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$(target/${{ matrix.target }}/release/xsktop -V)" = "xsktop $version"
       - name: Verify ELF and prepare executable
         run: |
           binary='xsktop/target/${{ matrix.target }}/release/xsktop'
