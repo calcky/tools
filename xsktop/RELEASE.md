@@ -1,8 +1,10 @@
 AF_XDP socket monitoring with live per-queue RX/TX packet and byte rates,
 separate RX/TX error rates, UMEM/ring configuration, and best-effort process
-ownership. Sockets are grouped by interface and queue; packet and bandwidth
-rates stay visible together at supported terminal widths. Use `-c N` for N
-text samples without a TTY.
+ownership. The live details view now separates errors, events, and configuration.
+Click a Q, rate, or error column header to sort; click again to reverse.
+Metric sorts rank interfaces by their aggregate available rate, then queues
+within each interface. Use `s` to change sort columns without a mouse, or
+`-c N` for N text samples without a TTY.
 
 Shared interface/queue traffic cannot be attributed to individual sockets.
 The first sample after one shared socket closes may still contain its traffic;

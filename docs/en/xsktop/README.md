@@ -21,7 +21,7 @@ sudo xsktop -d 0.5            # refresh every 0.5 seconds
 sudo xsktop -c 5 -d 1 > log   # five plain-text samples
 ```
 
-Use arrow keys or `j/k` to select a socket, `s` to sort and `q` to quit.
+Use arrow keys or `j/k` to select a socket, click a Q/rate/error column header to sort (click again to reverse), `s` to cycle sort columns, and `q` to quit. Metric sorts rank interfaces by their aggregate rate, then queues within each interface.
 
 ## Key Options
 

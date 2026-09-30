@@ -27,10 +27,6 @@ impl Errors {
         self.tx_invalid
     }
 
-    pub fn total(self) -> u64 {
-        self.rx_total().saturating_add(self.tx_total())
-    }
-
     pub fn delta(self, old: Self) -> Self {
         Self {
             rx_dropped: self.rx_dropped.saturating_sub(old.rx_dropped),
@@ -335,7 +331,10 @@ mod tests {
         let socket = parse_socket(&msg).unwrap();
         assert_eq!((socket.inode, socket.ifindex, socket.queue), (77, 5, 3));
         assert_eq!(socket.rings[0], 1024);
-        assert_eq!(socket.errors.total(), 13);
+        assert_eq!(
+            (socket.errors.rx_total(), socket.errors.tx_total()),
+            (13, 0)
+        );
     }
 
     #[test]
@@ -372,7 +371,8 @@ mod tests {
             tx_empty: 400,
             ..Default::default()
         };
-        assert_eq!(events.total(), 0);
+        assert_eq!(events.rx_total(), 0);
+        assert_eq!(events.tx_total(), 0);
     }
 
     #[test]

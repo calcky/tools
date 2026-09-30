@@ -38,9 +38,15 @@ sudo xsktop -d 0.5          # refresh every 500 ms
 sudo xsktop -c 5 -d 1 > xsktop.txt  # five measured text samples, no TTY needed
 ```
 
-`j/k` or arrow keys select a socket, `s` cycles the sort key, and `q` quits.
-Sockets are grouped by interface and sorted by queue by default. Other sort
-keys reorder queues within each interface. The table always shows adjacent
+`j/k` or arrow keys select a socket, `q` quits. Click the Q or a rate/error
+column header to sort by that column; click it again to reverse the order.
+Use `s` to cycle columns when mouse input is unavailable. Sockets are grouped
+by interface and sorted by queue by default. A rate/error sort ranks interfaces
+by the sum of their available per-second socket rates, then ranks queues within
+each interface by the same metric. Interfaces and queues with no available rate
+remain last; traffic hidden for shared interface/queues is not included in the
+interface sum. The selected socket stays selected when rows move.
+The table always shows adjacent
 RX/TX packet rates, adjacent RX/TX megabits per second, separate RX/TX error
 rates, and the process holding the socket. RX errors sum dropped packets,
 invalid descriptors, and RX-ring-full counts; TX errors count invalid TX

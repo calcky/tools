@@ -3,7 +3,10 @@ mod diag;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEventKind,
+    },
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -11,8 +14,9 @@ use diag::{Errors, Socket};
 use libbpf_rs::{Link, MapCore, MapFlags, Object, ObjectBuilder};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
@@ -193,42 +197,74 @@ struct Item {
     ready: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Sort {
     Queue,
-    Activity,
-    Rx,
-    Tx,
-    Errors,
+    RxPps,
+    TxPps,
+    RxMbps,
+    TxMbps,
+    RxErrors,
+    TxErrors,
 }
 
 impl Sort {
     fn next(self) -> Self {
         match self {
-            Self::Queue => Self::Activity,
-            Self::Activity => Self::Rx,
-            Self::Rx => Self::Tx,
-            Self::Tx => Self::Errors,
-            Self::Errors => Self::Queue,
+            Self::Queue => Self::RxPps,
+            Self::RxPps => Self::TxPps,
+            Self::TxPps => Self::RxMbps,
+            Self::RxMbps => Self::TxMbps,
+            Self::TxMbps => Self::RxErrors,
+            Self::RxErrors => Self::TxErrors,
+            Self::TxErrors => Self::Queue,
         }
     }
     fn label(self) -> &'static str {
         match self {
             Self::Queue => "queue",
-            Self::Activity => "activity",
-            Self::Rx => "RX",
-            Self::Tx => "TX",
-            Self::Errors => "errors",
+            Self::RxPps => "RX pps",
+            Self::TxPps => "TX pps",
+            Self::RxMbps => "RX Mb/s",
+            Self::TxMbps => "TX Mb/s",
+            Self::RxErrors => "RX err/s",
+            Self::TxErrors => "TX err/s",
         }
     }
-    fn value(self, item: &Item) -> u64 {
+    fn column(self) -> usize {
         match self {
-            Self::Queue => 0,
-            Self::Activity => item.delta.rx_packets + item.delta.tx_packets,
-            Self::Rx => item.delta.rx_packets,
-            Self::Tx => item.delta.tx_packets,
-            Self::Errors => item.errors.total(),
+            Self::Queue => 1,
+            Self::RxPps => 3,
+            Self::TxPps => 4,
+            Self::RxMbps => 5,
+            Self::TxMbps => 6,
+            Self::RxErrors => 7,
+            Self::TxErrors => 8,
         }
+    }
+    fn value(self, item: &Item) -> Option<f64> {
+        if self == Self::Queue {
+            return Some(item.socket.queue as f64);
+        }
+        if !item.ready
+            || (item.ambiguous
+                && matches!(
+                    self,
+                    Self::RxPps | Self::TxPps | Self::RxMbps | Self::TxMbps
+                ))
+        {
+            return None;
+        }
+        let count = match self {
+            Self::Queue => unreachable!(),
+            Self::RxPps => item.delta.rx_packets,
+            Self::TxPps => item.delta.tx_packets,
+            Self::RxMbps => item.delta.rx_bytes,
+            Self::TxMbps => item.delta.tx_bytes,
+            Self::RxErrors => item.errors.rx_total(),
+            Self::TxErrors => item.errors.tx_total(),
+        };
+        Some(count as f64 / item.elapsed.max(0.001))
     }
 }
 
@@ -237,6 +273,7 @@ struct Screen {
     selected: usize,
     scroll: usize,
     sort: Sort,
+    sort_descending: bool,
     filter: Option<String>,
     interval: f64,
     started: Instant,
@@ -255,6 +292,7 @@ impl Screen {
             selected: 0,
             scroll: 0,
             sort: Sort::Queue,
+            sort_descending: false,
             filter: args.interface,
             interval: args.delay,
             started: Instant::now(),
@@ -342,7 +380,7 @@ impl Screen {
                 ready,
             });
         }
-        sort_items(&mut items, self.sort);
+        sort_items(&mut items, self.sort, self.sort_descending);
         self.items = items;
         self.previous = previous;
         self.sampled = Some(now);
@@ -364,17 +402,127 @@ impl Screen {
             self.selected = self.selected.saturating_sub(1);
         }
     }
+
+    fn set_sort(&mut self, sort: Sort) {
+        let selected_inode = self.items.get(self.selected).map(|item| item.socket.inode);
+        if self.sort == sort {
+            self.sort_descending = !self.sort_descending;
+        } else {
+            self.sort = sort;
+            self.sort_descending = sort != Sort::Queue;
+        }
+        sort_items(&mut self.items, self.sort, self.sort_descending);
+        if let Some(inode) = selected_inode {
+            if let Some(index) = self
+                .items
+                .iter()
+                .position(|item| item.socket.inode == inode)
+            {
+                self.selected = index;
+            }
+        }
+    }
 }
 
-fn sort_items(items: &mut [Item], sort: Sort) {
+fn sort_items(items: &mut [Item], sort: Sort, descending: bool) {
+    let mut iface_rates = HashMap::<String, (f64, bool)>::new();
+    if sort != Sort::Queue {
+        for item in items.iter() {
+            let entry = iface_rates.entry(item.socket.iface.clone()).or_default();
+            if let Some(value) = sort.value(item) {
+                entry.0 += value;
+                entry.1 = true;
+            }
+        }
+    }
+    let compare = |left: Option<f64>, right: Option<f64>| match (left, right) {
+        (Some(left), Some(right)) => {
+            if descending {
+                right.total_cmp(&left)
+            } else {
+                left.total_cmp(&right)
+            }
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    };
+    let iface_rate = |iface: &str| {
+        iface_rates
+            .get(iface)
+            .and_then(|(rate, valid)| valid.then_some(*rate))
+    };
     items.sort_by(|a, b| {
-        a.socket
-            .iface
-            .cmp(&b.socket.iface)
-            .then_with(|| sort.value(b).cmp(&sort.value(a)))
+        let by_iface = if sort == Sort::Queue {
+            std::cmp::Ordering::Equal
+        } else {
+            compare(iface_rate(&a.socket.iface), iface_rate(&b.socket.iface))
+        };
+        by_iface
+            .then_with(|| a.socket.iface.cmp(&b.socket.iface))
+            .then_with(|| compare(sort.value(a), sort.value(b)))
             .then_with(|| a.socket.queue.cmp(&b.socket.queue))
             .then_with(|| a.socket.inode.cmp(&b.socket.inode))
     });
+}
+
+fn screen_panes(area: Rect) -> [Rect; 4] {
+    Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(4),
+        Constraint::Length(12),
+        Constraint::Length(1),
+    ])
+    .areas(area)
+}
+
+fn table_widths(width: u16) -> [Constraint; 10] {
+    let lengths = if width >= 100 {
+        [15, 4, 5, 9, 9, 10, 10, 8, 8, 10]
+    } else if width >= 80 {
+        [11, 3, 4, 7, 7, 8, 8, 6, 6, 9]
+    } else {
+        [11, 2, 4, 6, 6, 7, 7, 5, 5, 10]
+    };
+    std::array::from_fn(|index| {
+        if index == 9 {
+            Constraint::Min(lengths[index])
+        } else {
+            Constraint::Length(lengths[index])
+        }
+    })
+}
+
+fn header_sort(area: Rect, column: u16, row: u16) -> Option<Sort> {
+    if area.width < 74 || area.height < 20 {
+        return None;
+    }
+    let table = screen_panes(area)[1];
+    if row != table.y + 1 {
+        return None;
+    }
+    let inner = Rect::new(
+        table.x + 1,
+        table.y + 1,
+        table.width.saturating_sub(2),
+        table.height.saturating_sub(2),
+    );
+    let columns = Layout::horizontal(table_widths(area.width))
+        .spacing(1)
+        .split(inner);
+    let index = columns
+        .iter()
+        .position(|rect| rect.x <= column && column < rect.right())?;
+    match index {
+        1 => Some(Sort::Queue),
+        3 => Some(Sort::RxPps),
+        4 => Some(Sort::TxPps),
+        5 => Some(Sort::RxMbps),
+        6 => Some(Sort::TxMbps),
+        7 => Some(Sort::RxErrors),
+        8 => Some(Sort::TxErrors),
+        _ => None,
+    }
 }
 
 struct TerminalGuard;
@@ -382,7 +530,18 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode()?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, crossterm::cursor::Hide) {
+        if let Err(error) = execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            crossterm::cursor::Hide
+        ) {
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                LeaveAlternateScreen,
+                crossterm::cursor::Show
+            );
             let _ = terminal::disable_raw_mode();
             return Err(error.into());
         }
@@ -392,7 +551,12 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -415,6 +579,42 @@ fn rate(value: u64, elapsed: f64) -> String {
 fn throughput(bytes: u64, elapsed: f64, partial: bool) -> String {
     let number = bytes as f64 * 8.0 / elapsed.max(0.001) / 1_000_000.0;
     format!("{}{number:.3}", if partial { ">=" } else { "" })
+}
+
+fn detail_metric(
+    label: &str,
+    delta: u64,
+    total: u64,
+    item: &Item,
+    is_error: bool,
+) -> Line<'static> {
+    let current = if item.ready {
+        rate(delta, item.elapsed)
+    } else {
+        "-".into()
+    };
+    let color = if is_error && delta > 0 {
+        Color::Yellow
+    } else {
+        Color::Reset
+    };
+    Line::from(vec![
+        Span::raw(format!("{label:<15} ")),
+        Span::styled(
+            format!("{current:>7}"),
+            Style::default()
+                .fg(color)
+                .add_modifier(if is_error && delta > 0 {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ),
+        Span::styled(
+            format!(" {total:>10}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 fn text_sample(screen: &Screen, index: u32, count: u32) -> String {
@@ -540,17 +740,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         );
         return;
     }
-    let wide = area.width >= 104;
-    let detail_height = if wide { 10 } else { 11 };
-    let panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(4),
-            Constraint::Length(detail_height),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let panes = screen_panes(area);
     let total_rx: u64 = screen
         .items
         .iter()
@@ -571,7 +761,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
             .any(|item| item.ready && item.delta.tx_unmeasured_packets > 0);
     let elapsed = screen.sample_interval.max(0.001);
     let header = format!(
-        "{} XSK  |  RX {}{} pps  TX {}{} pps  |  up {:.0}s  |  sort {}{}",
+        "{} XSK  |  RX {}{} pps  TX {}{} pps  |  up {:.0}s  |  sort {} {}{}",
         screen.items.len(),
         if partial_rx { ">=" } else { "" },
         rate(total_rx, elapsed),
@@ -579,6 +769,11 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         rate(total_tx, elapsed),
         screen.started.elapsed().as_secs_f64(),
         screen.sort.label(),
+        if screen.sort_descending {
+            "desc"
+        } else {
+            "asc"
+        },
         screen
             .sample_error
             .as_ref()
@@ -588,7 +783,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         Paragraph::new(header).block(Block::default().title(" xsktop ").borders(Borders::ALL)),
         panes[0],
     );
-    let header = Row::new([
+    let header_labels = [
         "IFACE",
         "Q",
         "MODE",
@@ -607,7 +802,19 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
             "TXe/s"
         },
         "PROCESS",
-    ])
+    ];
+    let header = Row::new(header_labels.into_iter().enumerate().map(|(index, label)| {
+        let cell = Cell::from(label);
+        if index == screen.sort.column() {
+            cell.style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            )
+        } else {
+            cell
+        }
+    }))
     .style(
         Style::default()
             .add_modifier(Modifier::BOLD)
@@ -717,47 +924,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
             });
             Row::new(cells).style(style)
         });
-    let widths = if area.width >= 100 {
-        vec![
-            Constraint::Length(15),
-            Constraint::Length(4),
-            Constraint::Length(5),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Min(10),
-        ]
-    } else if area.width >= 80 {
-        vec![
-            Constraint::Length(11),
-            Constraint::Length(3),
-            Constraint::Length(4),
-            Constraint::Length(7),
-            Constraint::Length(7),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(6),
-            Constraint::Length(6),
-            Constraint::Min(9),
-        ]
-    } else {
-        vec![
-            Constraint::Length(11),
-            Constraint::Length(2),
-            Constraint::Length(4),
-            Constraint::Length(6),
-            Constraint::Length(6),
-            Constraint::Length(7),
-            Constraint::Length(7),
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Min(10),
-        ]
-    };
-    let table = Table::new(rows, widths)
+    let table = Table::new(rows, table_widths(area.width))
         .header(header)
         .column_spacing(1)
         .block(
@@ -766,67 +933,150 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
                 .borders(Borders::ALL),
         );
     frame.render_widget(table, panes[1]);
-    let detail = if let Some(item) = screen.items.get(screen.selected) {
-        let s = &item.socket;
-        let note = if item.ambiguous {
-            "AMBIGUOUS: multiple XSKs on this interface/queue"
-        } else if item.delta.rx_frag_packets > 0 || item.delta.tx_unmeasured_packets > 0 {
-            ">= bandwidth: multi-buffer or batch bytes partly unavailable"
-        } else {
-            "RX = enqueued to XSK; TX = dequeued from XSK (not wire TX)"
-        };
-        let bw = if item.ambiguous || !item.ready {
-            "RX/TX: - / - Mb/s".into()
-        } else {
-            format!(
-                "RX/TX: {} / {} Mb/s",
-                throughput(
-                    item.delta.rx_bytes,
-                    item.elapsed,
-                    item.delta.rx_frag_packets > 0
+    if let Some(item) = screen.items.get(screen.selected) {
+        let socket = &item.socket;
+        let detail_panes = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(7),
+                Constraint::Length(4),
+            ])
+            .split(panes[2]);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!("{} / q{}", socket.iface, socket.queue),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                throughput(
-                    item.delta.tx_bytes,
-                    item.elapsed,
-                    item.delta.tx_unmeasured_packets > 0
-                )
-            )
+                Span::raw(format!("  {}  inode {}", socket.owner, socket.inode)),
+            ])),
+            detail_panes[0],
+        );
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(detail_panes[1]);
+        let metric_header = Line::styled(
+            format!("{:<15} {:>7} {:>10}", "", "rate/s", "total"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+        let errors = vec![
+            metric_header.clone(),
+            detail_metric(
+                "RX dropped",
+                item.errors.rx_dropped,
+                socket.errors.rx_dropped,
+                item,
+                true,
+            ),
+            detail_metric(
+                "RX invalid",
+                item.errors.rx_invalid,
+                socket.errors.rx_invalid,
+                item,
+                true,
+            ),
+            detail_metric(
+                "RX ring full",
+                item.errors.rx_full,
+                socket.errors.rx_full,
+                item,
+                true,
+            ),
+            detail_metric(
+                "TX invalid",
+                item.errors.tx_invalid,
+                socket.errors.tx_invalid,
+                item,
+                true,
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(errors).block(Block::default().title(" Errors ").borders(Borders::ALL)),
+            columns[0],
+        );
+        let note = if item.ambiguous {
+            "Shared queue: traffic hidden"
+        } else if item.delta.rx_frag_packets > 0 || item.delta.tx_unmeasured_packets > 0 {
+            ">= rates: incomplete byte count"
+        } else {
+            "RX/TX are XSK-side, not wire"
         };
-        let show_error_rate = |value| {
-            if item.ready {
-                rate(value, item.elapsed)
+        let events = vec![
+            metric_header,
+            detail_metric(
+                "UMEM fill empty",
+                item.errors.fill_empty,
+                socket.errors.fill_empty,
+                item,
+                false,
+            ),
+            detail_metric(
+                "TX empty",
+                item.errors.tx_empty,
+                socket.errors.tx_empty,
+                item,
+                false,
+            ),
+            Line::raw(""),
+            Line::styled(
+                note,
+                Style::default().fg(
+                    if item.ambiguous
+                        || item.delta.rx_frag_packets > 0
+                        || item.delta.tx_unmeasured_packets > 0
+                    {
+                        Color::Yellow
+                    } else {
+                        Color::DarkGray
+                    },
+                ),
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(events).block(
+                Block::default()
+                    .title(" Events (not errors) ")
+                    .borders(Borders::ALL),
+            ),
+            columns[1],
+        );
+        let config = format!(
+            "UMEM {} KiB  |  chunk {} B  |  {}\nRings  RX {}  TX {}  FILL {}  CQ {}",
+            socket.umem_bytes / 1024,
+            socket.chunk_bytes,
+            if socket.zero_copy {
+                "zero-copy"
             } else {
-                "-".into()
-            }
-        };
-        let err_rate = format!(
-            "ERR/s: RX drop {} invalid {} full {} | TX invalid {}",
-            show_error_rate(item.errors.rx_dropped),
-            show_error_rate(item.errors.rx_invalid),
-            show_error_rate(item.errors.rx_full),
-            show_error_rate(item.errors.tx_invalid)
+                "copy"
+            },
+            socket.rings[0],
+            socket.rings[1],
+            socket.rings[2],
+            socket.rings[3]
         );
-        let event_rate = format!(
-            "Events/s: UMEM fill empty {} | TX empty {}",
-            show_error_rate(item.errors.fill_empty),
-            show_error_rate(item.errors.tx_empty)
+        frame.render_widget(
+            Paragraph::new(config).block(
+                Block::default()
+                    .title(" Config (capacities) ")
+                    .borders(Borders::ALL),
+            ),
+            detail_panes[2],
         );
-        format!("{} / q{}  {}  inode {}\n{}{}UMEM {} KiB; chunk {} B\nRing capacity RX/TX/FILL/CQ: {}/{}/{}/{}\n{}\nErrors total: RX drop {} invalid {} full {} | TX invalid {}\n{}\nEvents total: UMEM fill empty {} | TX empty {}\n{}",
-            s.iface, s.queue, s.owner, s.inode, bw, if wide { " | " } else { "\n" }, s.umem_bytes / 1024, s.chunk_bytes,
-            s.rings[0], s.rings[1], s.rings[2], s.rings[3], err_rate, s.errors.rx_dropped,
-            s.errors.rx_invalid, s.errors.rx_full, s.errors.tx_invalid,
-            event_rate, s.errors.fill_empty, s.errors.tx_empty, note)
     } else {
-        "No AF_XDP sockets in this network namespace".into()
-    };
+        frame.render_widget(
+            Paragraph::new("No AF_XDP sockets in this network namespace")
+                .block(Block::default().title(" Details ").borders(Borders::ALL)),
+            panes[2],
+        );
+    }
     frame.render_widget(
-        Paragraph::new(detail).block(Block::default().title(" Details ").borders(Borders::ALL)),
-        panes[2],
-    );
-    frame.render_widget(
-        Paragraph::new(
-            "j/k or arrows select  |  s sort  |  q quit  |  Mb/s = packet bytes, not wire rate",
-        ),
+        Paragraph::new("click Q/rate/error header  |  s next sort  |  j/k select  |  q quit"),
         panes[3],
     );
 }
@@ -858,18 +1108,23 @@ fn run(args: Args) -> Result<()> {
             .saturating_duration_since(Instant::now())
             .min(Duration::from_millis(250));
         if event::poll(wait)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                match key.code {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Down | KeyCode::Char('j') => screen.move_selection(true),
                     KeyCode::Up | KeyCode::Char('k') => screen.move_selection(false),
-                    KeyCode::Char('s') => screen.sort = screen.sort.next(),
+                    KeyCode::Char('s') => screen.set_sort(screen.sort.next()),
                     _ => {}
+                },
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                    let size = terminal.size()?;
+                    let area = Rect::new(0, 0, size.width, size.height);
+                    if let Some(sort) = header_sort(area, mouse.column, mouse.row) {
+                        screen.set_sort(sort);
+                    }
                 }
+                _ => {}
             }
         }
         if Instant::now() >= next {
@@ -1099,7 +1354,7 @@ mod tests {
                 ready: true,
             });
         }
-        sort_items(&mut screen.items, screen.sort);
+        sort_items(&mut screen.items, screen.sort, screen.sort_descending);
         let keys = screen
             .items
             .iter()
@@ -1107,13 +1362,227 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(keys, [("eth0", 0), ("eth0", 1), ("eth1", 0)]);
 
-        sort_items(&mut screen.items, Sort::Activity);
+        sort_items(&mut screen.items, Sort::RxPps, true);
         let keys = screen
             .items
             .iter()
             .map(|item| (item.socket.iface.as_str(), item.socket.queue))
             .collect::<Vec<_>>();
-        assert_eq!(keys, [("eth0", 1), ("eth0", 0), ("eth1", 0)]);
+        assert_eq!(keys, [("eth1", 0), ("eth0", 1), ("eth0", 0)]);
+    }
+
+    #[test]
+    fn metric_sort_ranks_interface_totals_before_queues() {
+        let make = |iface: &str, queue, packets, ambiguous| Item {
+            socket: Socket {
+                iface: iface.into(),
+                queue,
+                inode: packets + queue + 1,
+                ..Default::default()
+            },
+            delta: Counter {
+                rx_packets: packets as u64,
+                ..Default::default()
+            },
+            errors: Errors::default(),
+            elapsed: 1.0,
+            ambiguous,
+            ready: true,
+        };
+        let mut items = vec![
+            make("eth1", 0, 150, false),
+            make("eth0", 0, 100, false),
+            make("eth0", 1, 90, false),
+            make("eth2", 0, 1000, true),
+            make("eth3", 0, 0, false),
+        ];
+        sort_items(&mut items, Sort::RxPps, true);
+        let keys = items
+            .iter()
+            .map(|item| (item.socket.iface.as_str(), item.socket.queue))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                ("eth0", 0),
+                ("eth0", 1),
+                ("eth1", 0),
+                ("eth3", 0),
+                ("eth2", 0)
+            ]
+        );
+
+        sort_items(&mut items, Sort::RxPps, false);
+        let keys = items
+            .iter()
+            .map(|item| (item.socket.iface.as_str(), item.socket.queue))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                ("eth3", 0),
+                ("eth1", 0),
+                ("eth0", 1),
+                ("eth0", 0),
+                ("eth2", 0)
+            ]
+        );
+
+        sort_items(&mut items, Sort::Queue, false);
+        let keys = items
+            .iter()
+            .map(|item| (item.socket.iface.as_str(), item.socket.queue))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                ("eth0", 0),
+                ("eth0", 1),
+                ("eth1", 0),
+                ("eth2", 0),
+                ("eth3", 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn metric_sort_uses_displayed_rate_and_keeps_unavailable_rows_last() {
+        let make = |queue, packets, elapsed, ambiguous, ready| Item {
+            socket: Socket {
+                iface: "eth0".into(),
+                queue,
+                inode: queue + 1,
+                ..Default::default()
+            },
+            delta: Counter {
+                rx_packets: packets,
+                rx_bytes: if queue == 0 { 10_000 } else { 1_000 },
+                ..Default::default()
+            },
+            errors: Errors {
+                rx_dropped: if queue == 2 { 50 } else { 0 },
+                ..Default::default()
+            },
+            elapsed,
+            ambiguous,
+            ready,
+        };
+        let mut items = vec![
+            make(0, 100, 1.0, false, true),
+            make(1, 80, 0.2, false, true),
+            make(2, 1000, 1.0, true, true),
+            make(3, 1000, 1.0, false, false),
+        ];
+        sort_items(&mut items, Sort::RxPps, true);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.socket.queue)
+                .collect::<Vec<_>>(),
+            [1, 0, 2, 3]
+        );
+        sort_items(&mut items, Sort::RxPps, false);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.socket.queue)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
+        sort_items(&mut items, Sort::RxMbps, true);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.socket.queue)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
+        sort_items(&mut items, Sort::RxErrors, true);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.socket.queue)
+                .collect::<Vec<_>>(),
+            [2, 0, 1, 3]
+        );
+    }
+
+    #[test]
+    fn selecting_a_sort_column_reorders_immediately_without_changing_socket() {
+        let mut screen = Screen::new(Args {
+            interface: None,
+            delay: 1.0,
+            count: None,
+        });
+        for (queue, packets) in [(0, 10), (1, 100)] {
+            screen.items.push(Item {
+                socket: Socket {
+                    iface: "eth0".into(),
+                    queue,
+                    inode: queue + 10,
+                    ..Default::default()
+                },
+                delta: Counter {
+                    rx_packets: packets,
+                    ..Default::default()
+                },
+                errors: Errors::default(),
+                elapsed: 1.0,
+                ambiguous: false,
+                ready: true,
+            });
+        }
+        screen.set_sort(Sort::RxPps);
+        assert!(screen.sort_descending);
+        assert_eq!(screen.items[0].socket.queue, 1);
+        assert_eq!(screen.items[screen.selected].socket.queue, 0);
+        screen.set_sort(Sort::RxPps);
+        assert!(!screen.sort_descending);
+        assert_eq!(screen.items[0].socket.queue, 0);
+        assert_eq!(screen.items[screen.selected].socket.queue, 0);
+    }
+
+    #[test]
+    fn sortable_header_hitboxes_match_rendered_columns() {
+        for width in [74, 80, 100, 120] {
+            let area = Rect::new(0, 0, width, 24);
+            let table = screen_panes(area)[1];
+            let inner = Rect::new(table.x + 1, table.y + 1, table.width - 2, table.height - 2);
+            let columns = Layout::horizontal(table_widths(width))
+                .spacing(1)
+                .split(inner);
+            for sort in [
+                Sort::Queue,
+                Sort::RxPps,
+                Sort::TxPps,
+                Sort::RxMbps,
+                Sort::TxMbps,
+                Sort::RxErrors,
+                Sort::TxErrors,
+            ] {
+                let column = columns[sort.column()];
+                assert_eq!(header_sort(area, column.x, column.y), Some(sort));
+                assert_eq!(header_sort(area, column.right() - 1, column.y), Some(sort));
+                assert_eq!(header_sort(area, column.x, column.y + 1), None);
+            }
+            assert_eq!(header_sort(area, columns[0].x, inner.y), None);
+            assert_eq!(header_sort(area, columns[2].x, inner.y), None);
+            assert_eq!(header_sort(area, columns[9].x, inner.y), None);
+            assert_eq!(header_sort(area, columns[3].right(), inner.y), None);
+
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            let mut screen = Screen::new(Args {
+                interface: None,
+                delay: 1.0,
+                count: None,
+            });
+            screen.set_sort(Sort::RxPps);
+            terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(columns[3].x, inner.y)].fg,
+                Color::Yellow
+            );
+        }
     }
 
     #[test]
@@ -1233,50 +1702,81 @@ mod tests {
 
     #[test]
     fn detail_separates_error_and_empty_ring_rates_from_totals() {
-        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
-        let mut screen = Screen::new(Args {
-            interface: None,
-            delay: 1.0,
-            count: None,
-        });
-        screen.items.push(Item {
-            socket: Socket {
-                iface: "eth0".into(),
-                errors: Errors {
-                    rx_dropped: 100,
-                    fill_empty: 500,
+        for (width, height) in [(74, 20), (120, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let mut screen = Screen::new(Args {
+                interface: None,
+                delay: 1.0,
+                count: None,
+            });
+            screen.items.push(Item {
+                socket: Socket {
+                    iface: "eth0".into(),
+                    errors: Errors {
+                        rx_dropped: 100,
+                        fill_empty: 500,
+                        ..Default::default()
+                    },
+                    umem_bytes: 16 * 1024 * 1024,
+                    chunk_bytes: 4096,
+                    rings: [2048; 4],
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-            errors: Errors {
-                rx_dropped: 4,
-                fill_empty: 20,
-                ..Default::default()
-            },
-            elapsed: 2.0,
-            ambiguous: false,
-            ready: true,
-            delta: Counter::default(),
-        });
-        terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let lines = (0..24)
-            .map(|row| {
-                (0..120)
-                    .map(|column| buffer[(column, row)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>();
-        assert!(lines.iter().any(|line| line.contains("ERR/s: RX drop 2")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Errors total: RX drop 100")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Events/s: UMEM fill empty 10")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Events total: UMEM fill empty 500")));
+                errors: Errors {
+                    rx_dropped: 4,
+                    fill_empty: 20,
+                    ..Default::default()
+                },
+                elapsed: 2.0,
+                ambiguous: false,
+                ready: true,
+                delta: Counter::default(),
+            });
+            terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let lines = (0..height)
+                .map(|row| {
+                    (0..width)
+                        .map(|column| buffer[(column, row)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Errors") && line.contains("Events (not errors)")),
+                "width {width}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Config (capacities)")),
+                "width {width}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("RX dropped") && line.contains("100")),
+                "width {width}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("UMEM fill empty") && line.contains("500")),
+                "width {width}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("UMEM 16384 KiB") && line.contains("chunk 4096 B")),
+                "width {width}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Rings  RX 2048  TX 2048  FILL 2048  CQ 2048")),
+                "width {width}"
+            );
+        }
     }
 }
