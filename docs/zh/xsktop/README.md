@@ -2,23 +2,23 @@
 
 实时查看当前网络命名空间中的 AF_XDP socket，按网口和队列显示 RX/TX 速率、错误和所属进程。
 
-## 下载
+## 安装
 
-从 [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) 下载 ARMv7、ARM64 或 x86_64 的静态程序。例如：
+以 x86_64 为例；其他架构见 [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release)。
 
 ```sh
 curl -fLO https://github.com/calcky/tools/releases/download/xsktop-release/xsktop-linux-x86_64
-chmod +x xsktop-linux-x86_64
-sudo ./xsktop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 xsktop-linux-x86_64 "$HOME/.local/bin/xsktop"
 ```
 
 ## 常用命令
 
 ```sh
-sudo xsktop                   # 实时窗口
-sudo xsktop -i eth0           # 仅看指定网口
-sudo xsktop -d 0.5            # 每 0.5 秒刷新
-sudo xsktop -c 5 -d 1 > log   # 采样 5 次，输出纯文本
+xsktop                   # 实时窗口
+xsktop -i eth0           # 仅看指定网口
+xsktop -d 0.5            # 每 0.5 秒刷新
+xsktop -c 5 -d 1 > log   # 采样 5 次，输出纯文本
 ```
 
 窗口中用方向键或 `j/k` 选择 socket；点击 Q、速率或错误率表头排序，再点一次反转；`s` 切换排序列，`q` 退出。指标排序先按网口汇总速率排，再排网口内的队列。

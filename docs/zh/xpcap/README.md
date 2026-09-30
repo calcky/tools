@@ -94,9 +94,9 @@ icmp6[icmp6type] = 128
 `portrange`。例如：
 
 ```sh
-sudo bin/xpcap -i eth0 'tcp and (dst port 80 or dst port 443)'
-sudo bin/xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
-sudo bin/xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
+xpcap -i eth0 'tcp and (dst port 80 or dst port 443)'
+xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
+xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
 ```
 
 `tcp-fin`、`tcp-syn`、`tcp-rst`、`tcp-push`、`tcp-ack`、`tcp-urg`、

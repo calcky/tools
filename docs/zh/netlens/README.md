@@ -2,11 +2,21 @@
 
 分层查看 Linux 网络流量、错误、丢弃和资源压力，从概览进入连接、网卡或协议详情。
 
+## 安装
+
+以 x86_64 为例；其他架构见 [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netlens-release/netlens-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netlens-linux-x86_64 "$HOME/.local/bin/netlens"
+```
+
 ## 开始使用
 
 ```sh
-sudo netlens
-sudo netlens -i eth0,eth1 -d 0.5
+netlens
+netlens -i eth0,eth1 -d 0.5
 ```
 
 默认每秒采样。`-d` 接受 0.25–60 秒；`-i` 筛选网口相关行，不改变主机或命名空间总计。
@@ -17,6 +27,15 @@ sudo netlens -i eth0,eth1 -d 0.5
 [![netlens 分层概览与回环网口统计](../assets/screenshots/netlens-overview.png)](../assets/screenshots/netlens-overview.png)
 
 隔离网络命名空间中的回环流量。缺失来源保留实际状态，不作为零值展示。
+
+## 关键选项
+
+| 选项 | 含义 |
+| --- | --- |
+| `-d SEC` | 采样间隔，默认 1 秒，范围 0.25–60 秒 |
+| `-i IFACES` | 筛选网口相关行，多个网口以逗号分隔；不改变主机总计 |
+| `overview/interface/socket/...` | 直接打开指定页面 |
+| `-h` / `-V` | 帮助 / 版本 |
 
 ## 按问题进入
 
@@ -49,7 +68,7 @@ sudo netlens -i eth0,eth1 -d 0.5
 ## 使用前了解
 
 工具只读，不抓包、不加载 BPF、不修改网络配置。观察范围是当前网络命名空间，部分主机级指标单独标注。
-`sudo` 提高进程和设备数据的可见性，但不能补齐内核或驱动不支持的字段。
+进程和设备数据的可见性取决于权限；提高权限也不能补齐内核或驱动不支持的字段。
 `n/a` 不代表零；遇到缺失或过期数据，先查看 Providers。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/netlens-release) · [完整手册](https://github.com/calcky/tools/blob/master/netlens/README.md)
+[完整手册](https://github.com/calcky/tools/blob/master/netlens/README.md)

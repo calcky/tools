@@ -5,40 +5,47 @@ Combines an initial Netlink snapshot, NEW/UPDATE/DESTROY events and periodic
 full calibration. Uses the current network namespace; no packet capture,
 firewall changes or automatic sysctl changes.
 
+## Installation
+
+Example for x86_64; see [cttop-release](https://github.com/calcky/tools/releases/tag/cttop-release) for other architectures.
+
 ```sh
-make cttop                       # from the repository root
-sudo ./bin/cttop                 # live window, group by original source IP
-sudo ./bin/cttop -g none         # one conntrack entry per row
-sudo ./bin/cttop -g none -p tcp -D 443
-sudo ./bin/cttop -g dst,dport,proto
-sudo ./bin/cttop -g src,dst -p tcp
-sudo ./bin/cttop -g mark
-sudo ./bin/cttop -g mark,src
-sudo ./bin/cttop -g dport -r 1    # sample bandwidth roughly every second
-sudo ./bin/cttop -N -g src,sport
-sudo ./bin/cttop -s 192.168.1.10 -D 443 -p tcp
-sudo ./bin/cttop -b -c 3         # plain reports
-sudo ./bin/cttop summary         # analyze one complete live snapshot and exit
-./bin/cttop -f conntrack.txt     # static snapshot, no root required
-./bin/cttop summary -f conntrack.txt
-sudo conntrack -L | ./bin/cttop summary -f
-sudo conntrack -L | ./bin/cttop -f
-sudo ip netns exec router ./bin/cttop
+curl -fLO https://github.com/calcky/tools/releases/download/cttop-release/cttop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 cttop-linux-x86_64 "$HOME/.local/bin/cttop"
+```
+
+## Common Commands
+
+```sh
+cttop                 # live window, group by original source IP
+cttop -g none         # one conntrack entry per row
+cttop -g none -p tcp -D 443
+cttop -g dst,dport,proto
+cttop -g src,dst -p tcp
+cttop -g mark
+cttop -g mark,src
+cttop -g dport -r 1    # sample bandwidth roughly every second
+cttop -N -g src,sport
+cttop -s 192.168.1.10 -D 443 -p tcp
+cttop -b -c 3         # plain reports
+cttop summary         # analyze one complete live snapshot and exit
+cttop -f conntrack.txt     # static snapshot, no root required
+cttop summary -f conntrack.txt
+conntrack -L | cttop summary -f
+conntrack -L | cttop -f
 ```
 
 Build requires Rust 1.88+. Running requires CAP_NET_ADMIN in the target network
-namespace, an active conntrack subsystem and ctnetlink support. `sudo` is the usual
-way to obtain permission. Containers need access to the namespace being diagnosed;
+namespace, an active conntrack subsystem and ctnetlink support. Containers need access to the namespace being diagnosed;
 running inside an ordinary container shows that container's connections only.
 The tool is named `cttop` to distinguish it from container-monitoring tools.
-The [current release](https://github.com/calcky/tools/releases/tag/cttop-release)
-provides `cttop-linux-arm` (ARMv7 hard-float),
-`cttop-linux-arm64`, and `cttop-linux-x86_64` as direct musl static binary downloads.
-Apply `chmod +x` before running. The previously published
+The release also provides `cttop-linux-arm` (ARMv7 hard-float) and
+`cttop-linux-arm64`. The previously published
 [ctop v0.1.0](https://github.com/calcky/tools/releases/tag/ctop-v0.1.0)
 still uses the old name.
 The `Build cttop` workflow tests all three targets, checks static linkage and
-publishes version-tagged releases.
+publishes through the canonical `cttop-release` tag.
 
 ## Options
 
@@ -82,11 +89,11 @@ or grouping options (`-b/-c/-g/-i/-r/-W/-m`).
 ## Static Files
 
 ```sh
-sudo conntrack -L -o extended > conntrack.txt
-./bin/cttop -f conntrack.txt -g dst,dport,proto
-./bin/cttop -f conntrack.txt -g mark,src
-sudo conntrack -L | ./bin/cttop -f
-./bin/cttop -f conntrack.txt -g none -b
+conntrack -L -o extended > conntrack.txt
+cttop -f conntrack.txt -g dst,dport,proto
+cttop -f conntrack.txt -g mark,src
+conntrack -L | cttop -f
+cttop -f conntrack.txt -g none -b
 ```
 
 Static mode needs no CAP_NET_ADMIN and does not open a netlink socket or read

@@ -3,7 +3,7 @@
 ## Find A Connection
 
 ```sh
-sudo netlens socket
+netlens socket
 ```
 
 Press `/` to filter, Ctrl+U to clear, Enter for details and Esc to return.

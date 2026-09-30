@@ -16,12 +16,13 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages |
 | [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership |
+| [gomemtop](gomemtop/README.md) | Analyze Go pprof heap growth and local process RSS |
 
 Start with [Installation](getting-started.md).
 
-## Downloads
+## Installation
 
-| Tool | Static Executables |
+| Tool | Release |
 | --- | --- |
 | irqtop / irqstat | [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) |
 | netping | [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) |
@@ -31,7 +32,9 @@ Start with [Installation](getting-started.md).
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
+| xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | xsktop | [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
+| gomemtop | [gomemtop-release](https://github.com/calcky/tools/releases/tag/gomemtop-release) |
 
 ## Other Scripts
 

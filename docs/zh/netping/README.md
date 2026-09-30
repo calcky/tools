@@ -6,6 +6,16 @@
 
 三协议回环实测，每种协议 100 PPS。数值仅展示界面，不代表跨机性能。
 
+## 安装
+
+以 x86_64 为例；其他架构见 [netping-release](https://github.com/calcky/tools/releases/tag/netping-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netping-release/netping-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netping-linux-x86_64 "$HOME/.local/bin/netping"
+```
+
 ## 常用命令
 
 ```sh
@@ -69,8 +79,8 @@ TCP 回显 RTT 不包含初始建连；`-C` 明确测量建连耗时。
 ## 注意事项
 
 - UDP/TCP 回显需要 `netping -s`；ICMP 和普通 TCP 建连不需要配套服务端。
-- ICMP 权限不足时使用 `sudo`、`CAP_NET_RAW` 或调整系统 ping socket 权限。
+- ICMP 权限不足时需要 `CAP_NET_RAW` 或调整系统 ping socket 权限。
 - MTU 只有获得明确的报文过大证据并验证可达尺寸时才报告精确值；超时可能只是丢包或 ICMP 被过滤。
 - MSS 是 TCP 载荷字节数，不等于 MTU；TCP 选项可能让实际发送 MSS 小于握手通告值。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/netping-release) · [完整手册](https://github.com/calcky/tools/blob/master/netping/README.md)
+[完整手册](https://github.com/calcky/tools/blob/master/netping/README.md)

@@ -2,11 +2,21 @@
 
 Inspect Linux network traffic, errors, drops and resource pressure by layer, then drill down into connections, interfaces or protocols.
 
+## Installation
+
+Example for x86_64; see [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netlens-release/netlens-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netlens-linux-x86_64 "$HOME/.local/bin/netlens"
+```
+
 ## Start
 
 ```sh
-sudo netlens
-sudo netlens -i eth0,eth1 -d 0.5
+netlens
+netlens -i eth0,eth1 -d 0.5
 ```
 
 The default sample interval is one second. `-d` accepts 0.25–60 seconds; `-i` filters interface-labelled rows without changing host or namespace totals.
@@ -17,6 +27,15 @@ Select a layer or interface in Overview and press Enter for details; Esc returns
 [![netlens layered overview and loopback interface statistics](../../assets/screenshots/netlens-overview.png)](../../assets/screenshots/netlens-overview.png)
 
 Loopback traffic in an isolated network namespace. Missing sources retain their actual status instead of appearing as zero.
+
+## Key Options
+
+| Option | Meaning |
+| --- | --- |
+| `-d SEC` | Sample interval; default 1 second, range 0.25–60 seconds |
+| `-i IFACES` | Filter interface-labelled rows, comma-separated; host totals stay unchanged |
+| `overview/interface/socket/...` | Open a page directly |
+| `-h` / `-V` | Help / version |
 
 ## Choose By Task
 
@@ -49,7 +68,7 @@ The first connection-row click selects it; the second opens details. Clicking a 
 ## Before You Start
 
 The tool is read-only: no capture, BPF loading or network configuration changes. It observes the current network namespace; host-wide metrics are labelled separately.
-`sudo` improves process/device visibility but cannot supply unsupported kernel or driver fields.
+Process and device visibility depends on permissions; elevated privileges cannot supply unsupported kernel or driver fields.
 `n/a` is not zero. Check Providers when data is missing or stale.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/netlens-release) · [Full manual](https://github.com/calcky/tools/blob/master/netlens/README.md)
+[Full manual](https://github.com/calcky/tools/blob/master/netlens/README.md)

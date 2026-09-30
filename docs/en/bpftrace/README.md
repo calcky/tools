@@ -4,12 +4,12 @@ Trace Linux kernels and processes with short scripts. Static executables are ava
 
 ## Installation
 
-Choose the matching architecture from the [download page](https://github.com/calcky/tools/releases/tag/bpftrace-release).
-For x86_64:
+Example for x86_64; see [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) for other architectures.
 
 ```sh
-chmod +x bpftrace-linux-x86_64
-sudo ./bpftrace-linux-x86_64 --info
+curl -fLO https://github.com/calcky/tools/releases/download/bpftrace-release/bpftrace-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 bpftrace-linux-x86_64 "$HOME/.local/bin/bpftrace"
 ```
 
 The executable needs no dynamic musl/glibc, but tracing still depends on kernel features and permissions.
@@ -18,18 +18,18 @@ The executable needs no dynamic musl/glibc, but tracing still depends on kernel 
 
 ```sh
 # List syscall tracepoints
-sudo ./bpftrace-linux-x86_64 -l 'tracepoint:syscalls:sys_enter_*'
+bpftrace -l 'tracepoint:syscalls:sys_enter_*'
 
 # Print the names of processes executing programs
-sudo ./bpftrace-linux-x86_64 -e \
+bpftrace -e \
   'tracepoint:syscalls:sys_enter_execve { printf("%s\n", comm); }'
 
 # Count read calls per process name every second
-sudo ./bpftrace-linux-x86_64 -e \
+bpftrace -e \
   'tracepoint:syscalls:sys_enter_read { @[comm] = count(); } interval:s:1 { print(@); clear(@); }'
 
 # Run an existing script
-sudo ./bpftrace-linux-x86_64 trace.bt
+bpftrace trace.bt
 ```
 
 Press Ctrl+C to stop tracing.
@@ -52,4 +52,4 @@ Press Ctrl+C to stop tracing.
 - High-frequency probes and excessive printing can affect the system; start with a narrow scope.
 - This static build does not provide `skb_output`.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/bpftrace-release) · [Full notes](https://github.com/calcky/tools/blob/master/bpftrace/README.md) · [Upstream manual](https://bpftrace.org/docs)
+[Full notes](https://github.com/calcky/tools/blob/master/bpftrace/README.md) · [Upstream manual](https://bpftrace.org/docs)

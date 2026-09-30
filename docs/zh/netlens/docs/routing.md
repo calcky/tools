@@ -3,7 +3,7 @@
 ## 查看连接与双向流量
 
 ```sh
-sudo netlens conntrack
+netlens conntrack
 ```
 
 每个连接一行，显示协议、状态、原始端点、mark，以及双向字节、包数、PPS 和带宽。
@@ -41,7 +41,7 @@ udp and portrange 10000-20000
 ## 查看路由和邻居
 
 ```sh
-sudo netlens route
+netlens route
 ```
 
 Routes、Policy Rules 和 Neighbours 按当前命名空间展示。

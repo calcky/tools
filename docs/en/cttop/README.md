@@ -4,37 +4,47 @@ Inspect Linux conntrack connections, traffic and anomaly signals, with grouped d
 
 [![cttop source-IP groups and details from a static snapshot](../../assets/screenshots/cttop-static.png)](../../assets/screenshots/cttop-static.png)
 
+## Installation
+
+Example for x86_64; see [cttop-release](https://github.com/calcky/tools/releases/tag/cttop-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/cttop-release/cttop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 cttop-linux-x86_64 "$HOME/.local/bin/cttop"
+```
+
 Static sample using documentation addresses. Saved packets/bytes are available; bandwidth and change rates remain `N/A`.
 
 ## Common Commands
 
 ```sh
 # Group by original source IP
-sudo cttop
+cttop
 
 # One connection per row
-sudo cttop -g none
+cttop -g none
 
 # Group by mark/source or destination service
-sudo cttop -g mark,src
-sudo cttop -g dst,dport,proto
+cttop -g mark,src
+cttop -g dst,dport,proto
 
 # Filter TCP 443, or inspect translated endpoints
-sudo cttop -p tcp -D 443
-sudo cttop -N -g src,sport
+cttop -p tcp -D 443
+cttop -N -g src,sport
 
 # Three periodic text reports
-sudo cttop -b -c 3
+cttop -b -c 3
 
 # Analyze one current conntrack snapshot and exit
-sudo cttop summary
+cttop summary
 
 # Export and load a snapshot, or read from a pipe
-sudo conntrack -L -o extended > conntrack.txt
+conntrack -L -o extended > conntrack.txt
 cttop -f conntrack.txt
 cttop summary -f conntrack.txt
-sudo conntrack -L | cttop -f
-sudo conntrack -L | cttop summary -f
+conntrack -L | cttop -f
+conntrack -L | cttop summary -f
 ```
 
 ## Key Options
@@ -84,10 +94,10 @@ filters, but not periodic-report or grouping options (`-b/-c/-g/-i/-r/-W/-m`).
 
 ## Notes
 
-Live monitoring needs `CAP_NET_ADMIN` in the target network namespace; `sudo` is the usual choice.
+Live monitoring needs `CAP_NET_ADMIN` in the target network namespace; offline file analysis does not.
 Offline analysis needs no root. A static snapshot can show recorded counters and states,
 but cannot calculate bandwidth, creation rates or connection age.
 Command-line IP/port filters always match original tuples, including in the NAT view.
 The tool is read-only; it does not change firewall rules or enable accounting automatically.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/cttop-release) · [Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)

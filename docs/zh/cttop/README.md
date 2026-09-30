@@ -4,37 +4,47 @@
 
 [![cttop 静态快照的源地址聚合与详情](../assets/screenshots/cttop-static.png)](../assets/screenshots/cttop-static.png)
 
+## 安装
+
+以 x86_64 为例；其他架构见 [cttop-release](https://github.com/calcky/tools/releases/tag/cttop-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/cttop-release/cttop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 cttop-linux-x86_64 "$HOME/.local/bin/cttop"
+```
+
 静态样例快照，使用文档示例地址。累计包数和字节来自文件，带宽及变化速率为 `N/A`。
 
 ## 常用命令
 
 ```sh
 # 按原始源 IP 聚合
-sudo cttop
+cttop
 
 # 每个连接一行
-sudo cttop -g none
+cttop -g none
 
 # 按 mark、源 IP 或目标服务聚合
-sudo cttop -g mark,src
-sudo cttop -g dst,dport,proto
+cttop -g mark,src
+cttop -g dst,dport,proto
 
 # 筛选 TCP 443，并查看 NAT 后的端点
-sudo cttop -p tcp -D 443
-sudo cttop -N -g src,sport
+cttop -p tcp -D 443
+cttop -N -g src,sport
 
 # 周期文本输出，共三次
-sudo cttop -b -c 3
+cttop -b -c 3
 
 # 分析一次当前 conntrack 快照并退出
-sudo cttop summary
+cttop summary
 
 # 导出后离线读取，或通过管道读取
-sudo conntrack -L -o extended > conntrack.txt
+conntrack -L -o extended > conntrack.txt
 cttop -f conntrack.txt
 cttop summary -f conntrack.txt
-sudo conntrack -L | cttop -f
-sudo conntrack -L | cttop summary -f
+conntrack -L | cttop -f
+conntrack -L | cttop summary -f
 ```
 
 ## 关键选项
@@ -81,9 +91,9 @@ sudo conntrack -L | cttop summary -f
 
 ## 注意事项
 
-实时监控需要目标网络命名空间中的 `CAP_NET_ADMIN`，一般使用 `sudo`；静态文件分析不需要 root。
+实时监控需要目标网络命名空间中的 `CAP_NET_ADMIN`；静态文件分析不需要该权限。
 静态快照只能显示已记录的包数、字节数和连接状态，无法计算带宽、新建速率或连接年龄。
 命令行 IP/端口筛选始终匹配原始五元组，即使当前使用 NAT 视图。
 工具只读，不修改防火墙或自动启用 accounting。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/cttop-release) · [完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)

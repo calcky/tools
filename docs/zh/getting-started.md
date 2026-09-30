@@ -1,8 +1,8 @@
 # 安装与使用
 
-## 下载静态程序
+## 安装
 
-在[概览](index.md)选择工具，打开对应下载页面，再选择 CPU 架构。
+在[概览](index.md)选择工具，打开对应 Release，选择 CPU 架构。以下统一以 x86_64 为例。
 
 | CPU 架构 | 附件后缀 |
 | --- | --- |
@@ -24,27 +24,13 @@ ARMv7 版本不能用于 ARMv5/ARMv6 或软浮点系统。
 
 ## 使用 irqstat
 
-irqstat 和 irqtop 使用同一个程序，以命令名称选择输出方式。下载 irqtop 后建立链接：
+irqstat 和 irqtop 使用同一个程序，以命令名称选择输出方式。安装 irqtop 后建立链接：
 
 ```sh
 install -m 755 irqtop-linux-x86_64 "$HOME/.local/bin/irqtop"
 ln -sfn irqtop "$HOME/.local/bin/irqstat"
 irqstat -n 1 5
 ```
-
-## 从源码安装
-
-需要 Rust 和 C 编译工具链；建议使用当前 Rust stable。
-
-```sh
-git clone https://github.com/calcky/tools.git
-cd tools
-make netping
-make install-netping PREFIX="$HOME/.local"
-```
-
-将 `netping` 替换成 `irqtop`、`flowgen`、`cttop` 或 `netlens`，即可安装对应工具。
-需要系统级安装时执行 `sudo make install-netping`，默认目录为 `/usr/local/bin`。
 
 ## 权限
 

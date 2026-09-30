@@ -3,7 +3,7 @@
 ## Inspect Connections And Directional Traffic
 
 ```sh
-sudo netlens conntrack
+netlens conntrack
 ```
 
 Each row shows protocol, state, original endpoints, mark, and directional bytes, packets, PPS and bandwidth.
@@ -41,7 +41,7 @@ Rules without counters show `NO COUNTER`. Do not sum native nftables and iptable
 ## Inspect Routes And Neighbours
 
 ```sh
-sudo netlens route
+netlens route
 ```
 
 Routes, Policy Rules and Neighbours belong to the current namespace.

@@ -2,6 +2,16 @@
 
 Generate multi-session TCP/UDP load with a paired echo server, record request/response measurements, and produce offline RTT and HTML time-series reports.
 
+## Installation
+
+Example for x86_64; see [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/flowgen-release/flowgen-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 flowgen-linux-x86_64 "$HOME/.local/bin/flowgen"
+```
+
 ## Common Commands
 
 Start the server on the target:
@@ -74,4 +84,4 @@ Reordering is per session; jitter is the absolute RTT difference between adjacen
 - `limited` and `skipped` mean local capacity or scheduling limits, not packet loss. TCP timeouts are not a network packet-loss percentage either.
 - Capacity depends on descriptors, memory and the port pool. The tool does not change sysctls or configure IP addresses.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/flowgen-release) · [Full manual](https://github.com/calcky/tools/blob/master/flowgen/README.md)
+[Full manual](https://github.com/calcky/tools/blob/master/flowgen/README.md)

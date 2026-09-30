@@ -2,23 +2,23 @@
 
 Monitor AF_XDP sockets in the current network namespace, grouped by interface and queue, with RX/TX rates, errors and process ownership.
 
-## Download
+## Installation
 
 Get the static ARMv7, ARM64 or x86_64 executable from [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release). For example:
 
 ```sh
 curl -fLO https://github.com/calcky/tools/releases/download/xsktop-release/xsktop-linux-x86_64
-chmod +x xsktop-linux-x86_64
-sudo ./xsktop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 xsktop-linux-x86_64 "$HOME/.local/bin/xsktop"
 ```
 
 ## Common Commands
 
 ```sh
-sudo xsktop                   # live window
-sudo xsktop -i eth0           # one interface
-sudo xsktop -d 0.5            # refresh every 0.5 seconds
-sudo xsktop -c 5 -d 1 > log   # five plain-text samples
+xsktop                   # live window
+xsktop -i eth0           # one interface
+xsktop -d 0.5            # refresh every 0.5 seconds
+xsktop -c 5 -d 1 > log   # five plain-text samples
 ```
 
 Use arrow keys or `j/k` to select a socket, click a Q/rate/error column header to sort (click again to reverse), `s` to cycle sort columns, and `q` to quit. Metric sorts rank interfaces by their aggregate rate, then queues within each interface.

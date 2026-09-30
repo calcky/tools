@@ -3,7 +3,7 @@
 ## 找到目标连接
 
 ```sh
-sudo netlens socket
+netlens socket
 ```
 
 按 `/` 输入筛选条件，Ctrl+U 清空。Enter 打开所选连接详情，Esc 返回。

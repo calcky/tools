@@ -2,7 +2,19 @@
 
 Linux TCP/UDP session-load generator with a paired equal-length echo server,
 per-session request pacing, binary recording and offline RTT analysis.
-Requires Rust 1.88 or newer to build. Ordinary loopback tests need no sudo.
+Requires Rust 1.88 or newer to build. Ordinary loopback tests need no elevated privileges.
+
+## Installation
+
+Example for x86_64; see [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/flowgen-release/flowgen-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 flowgen-linux-x86_64 "$HOME/.local/bin/flowgen"
+```
+
+## Build locally
 
 ```sh
 cargo build --release
@@ -19,17 +31,17 @@ The server prints startup information once and reports runtime errors. Add
 server recordings remain available in either mode.
 
 ```sh
-./target/release/flowgen -s -p 11112 -w 1 -o results/server-1
+flowgen -s -p 11112 -w 1 -o results/server-1
 
 # Fixed: ramp to 100 ready sessions over 2 seconds, then send for 10 seconds.
-./target/release/flowgen -u -c 100 -a 2 -r 20 -T 10 -w 1 \
+flowgen -u -c 100 -a 2 -r 20 -T 10 -w 1 \
   -P 20000-29999 -o results/fixed-1 127.0.0.1
 
 # Churn: same ramp, then replace 20 sessions/s while targeting 100 ready.
-./target/release/flowgen -t -c 100 -a 2 -U 20 -r 20 -T 10 -w 1 \
+flowgen -t -c 100 -a 2 -U 20 -r 20 -T 10 -w 1 \
   -P 20000-29999 -o results/churn-1 127.0.0.1
 
-./target/release/flowgen -R results/churn-1
+flowgen -R results/churn-1
 ```
 
 Use `-6` on both endpoints for IPv6 (for example, target `::1`). Both data

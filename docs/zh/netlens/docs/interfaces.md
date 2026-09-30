@@ -3,10 +3,10 @@
 ## 从网口下钻
 
 ```sh
-sudo netlens -i eth0,eth1 interface
-sudo netlens qdisc
-sudo netlens hardirq
-sudo netlens softirq
+netlens -i eth0,eth1 interface
+netlens qdisc
+netlens hardirq
+netlens softirq
 ```
 
 Interface 同时显示流量与配置，选择网口按 Enter 进入该设备的分层详情。
@@ -44,7 +44,7 @@ PF 和 VF 都按实际 netdevice 展示，包括 DOWN 的设备。当前命名�
 ## 看 qdisc 排队和丢弃
 
 ```sh
-sudo netlens qdisc
+netlens qdisc
 ```
 
 | 指标 | 含义 |

@@ -15,11 +15,18 @@ Missing or unusable coverage is shown explicitly as `UNSUPPORTED`,
 `UNAVAILABLE`, or `NO PROVIDER`; absence of data is not presented as zero
 traffic or a healthy network.
 
-## Run
+## Installation
 
-Static ARMv7, ARM64 and x86_64 executables are available from
-[GitHub Releases](https://github.com/calcky/tools/releases/tag/netlens-v0.1.0).
+Example for x86_64; see [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) for other architectures.
 See [the release notes](RELEASE.md) for architecture requirements and checksums.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netlens-release/netlens-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netlens-linux-x86_64 "$HOME/.local/bin/netlens"
+```
+
+## Run
 
 Run `netlens` directly from an interactive terminal:
 

@@ -2,19 +2,30 @@
 
 Capture packets at XDP and AF_XDP kernel stages, alongside conventional interface traffic, without replacing the attached XDP program. XDP/XSK stages require Linux 6.6+, kernel BTF, and privileges to load and attach BPF tracing programs. The `pcap` stage only requires Linux packet-socket privileges (`CAP_NET_RAW`).
 
+## Installation
+
+Example for x86_64; see [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) for other architectures.
+
 ```sh
-make xpcap
-sudo bin/xpcap -i eth0
-sudo bin/xpcap -i any -c 20
-sudo bin/xpcap -i eth0 -i eth1 -w trace.pcapng
-sudo bin/xpcap -i eth0 -S xdp-out,redirect,xsk-rx -q 3 -c 100
-sudo bin/xpcap -i eth0 udp and src net 192.0.2.0/24 and dst port 9000
-sudo bin/xpcap -i eth0 -S pcap -w conventional.pcapng
-sudo bin/xpcap -i eth0 -S xsk -Q in -w xsk-rx.pcapng
-sudo bin/xpcap -i eth0 -S xsk,pcap -Q out tcp and port 443
-sudo bin/xpcap -i eth0 -S pcap -v -e -c 10 tcp
-sudo bin/xpcap -i eth0 -S xsk-in,pcap-out host 192.0.2.1 and udp
-sudo bin/xpcap -i eth0 -S xsk,pcap -w combined.pcapng udp port 9000
+curl -fLO https://github.com/calcky/tools/releases/download/xpcap-release/xpcap-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 xpcap-linux-x86_64 "$HOME/.local/bin/xpcap"
+```
+
+## Common Commands
+
+```sh
+xpcap -i eth0
+xpcap -i any -c 20
+xpcap -i eth0 -i eth1 -w trace.pcapng
+xpcap -i eth0 -S xdp-out,redirect,xsk-rx -q 3 -c 100
+xpcap -i eth0 udp and src net 192.0.2.0/24 and dst port 9000
+xpcap -i eth0 -S pcap -w conventional.pcapng
+xpcap -i eth0 -S xsk -Q in -w xsk-rx.pcapng
+xpcap -i eth0 -S xsk,pcap -Q out tcp and port 443
+xpcap -i eth0 -S pcap -v -e -c 10 tcp
+xpcap -i eth0 -S xsk-in,pcap-out host 192.0.2.1 and udp
+xpcap -i eth0 -S xsk,pcap -w combined.pcapng udp port 9000
 ```
 
 `-i` is required and repeatable. `-i any` captures all interfaces and cannot be combined with another `-i`; newly attached interfaces are included by the packet socket, while XDP programs are discovered only at startup. The default stages are XSK receive/transmit and conventional PCAP receive/transmit. Select XDP or redirect explicitly with `-S/--stage`. `-S xsk` selects both AF_XDP directions; `-S pcap` selects conventional receive/transmit packets; combine them as `-S xsk,pcap`. For a specific direction per source use `xsk-in`, `xsk-out`, `pcap-in`, or `pcap-out`. The original `xsk-rx` and `xsk-tx` names remain accepted, as do `xdp-in`, `xdp-out`, and `redirect`.

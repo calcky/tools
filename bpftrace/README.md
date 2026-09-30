@@ -11,6 +11,16 @@ requires a suitable kernel, BTF where the selected script needs it, and root
 or equivalent capabilities for tracing. The `skb_output` feature is disabled
 because Alpine's static `libpcap.a` cannot link into the ARM64 executable.
 
+## Installation
+
+Example for x86_64; see [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/bpftrace-release/bpftrace-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 bpftrace-linux-x86_64 "$HOME/.local/bin/bpftrace"
+```
+
 ## Build locally
 
 Docker Buildx and binfmt/QEMU support are required for ARM builds:
@@ -28,12 +38,12 @@ image; subsequent builds reuse both. Builds use four parallel jobs by default;
 set `BPFTRACE_JOBS` to tune this for the host.
 
 The GitHub Actions workflow performs the same build and uploads one executable
-per architecture. A tag such as `bpftrace-v0.27.0` publishes a GitHub release.
+per architecture. The canonical `bpftrace-release` tag publishes the GitHub release.
 
 ## Runtime check
 
 ```sh
-sudo ./bpftrace-linux-x86_64 -e 'tracepoint:syscalls:sys_enter_execve { printf("%s\n", comm); }'
+bpftrace -e 'tracepoint:syscalls:sys_enter_execve { printf("%s\n", comm); }'
 ```
 
 The release artifact is the executable itself, without an additional archive.

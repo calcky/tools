@@ -6,6 +6,17 @@
 
 `irqtop -a -m 100 -b` 实际窗口：中断总计、每 CPU 速率与 softnet 同屏。
 
+## 安装
+
+以 x86_64 为例；其他架构见 [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/irqtop-release/irqtop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 irqtop-linux-x86_64 "$HOME/.local/bin/irqtop"
+ln -sfn irqtop "$HOME/.local/bin/irqstat"
+```
+
 ## 常用命令
 
 ```sh
@@ -71,4 +82,4 @@ IRQ/s 不是 PPS，也不是 CPU 占用率。NET_RX/NET_TX 和 softnet 均为本
 VF 标签显示主机可见的中断，不代表虚拟机内的中断或 CPU 分布；选择 PF 不会自动选中其 VF。
 工具只读，不修改 IRQ 亲和性或系统配置。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/irqtop-release) · [完整手册](https://github.com/calcky/tools/blob/master/irqtop/README.md)
+[完整手册](https://github.com/calcky/tools/blob/master/irqtop/README.md)

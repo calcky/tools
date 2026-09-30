@@ -18,6 +18,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages and PCAPNG output |
 | [xsktop](xsktop/README.md) | Live AF_XDP socket rates, errors and process ownership |
+| [gomemtop](gomemtop/README.md) | Live Go pprof heap growth and local process RSS analysis |
 
 The repository also includes `irq-affinity.sh` for configuring IRQ/RPS.
 The affinity script changes IRQ/RPS configuration.
@@ -29,7 +30,7 @@ The affinity script changes IRQ/RPS configuration.
 The documentation site defaults to Chinese; use the header to switch to English.
 The table above links to each tool's full manual.
 
-## Download And Install
+## Installation
 
 Choose a tool and architecture from [GitHub Releases](https://github.com/calcky/tools/releases):
 `linux-x86_64`, `linux-arm64`, or `linux-arm` (`linux-armv7` for netlens).

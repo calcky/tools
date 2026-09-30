@@ -28,7 +28,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 
 文档站默认中文，顶部可切换英文。各工具的完整手册见上表。
 
-## 下载与安装
+## 安装
 
 从 [GitHub Releases](https://github.com/calcky/tools/releases) 选择工具和架构：
 `linux-x86_64`、`linux-arm64` 或 `linux-arm`（netlens 为 `linux-armv7`）。
@@ -42,7 +42,7 @@ install -m 755 netping-linux-x86_64 "$HOME/.local/bin/netping"
 netping -h
 ```
 
-确保 `$HOME/.local/bin` 已加入 `PATH`。下载的是静态 Linux 程序，无需 Rust 运行环境。
+确保 `$HOME/.local/bin` 已加入 `PATH`。Release 附件是静态 Linux 程序，无需 Rust 运行环境。
 
 也可以从源码安装单个工具（需要 Rust 和 C 编译工具链）：
 

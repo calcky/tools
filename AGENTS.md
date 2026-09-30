@@ -1,5 +1,23 @@
 # Repository Instructions
 
+## Tool Documentation
+
+- In usage examples, invoke the installed executable by its tool name (for
+  example `netping ...`), without `sudo`, `./`, `bin/`, an absolute path, or an
+  architecture suffix. Keep privilege requirements in prose, separate from
+  the copyable command.
+- Call the setup section "安装" (English: "Installation"), not "下载". Show
+  an x86_64 asset URL from the tool's canonical GitHub Release, install it as
+  the unsuffixed tool name in a directory on `PATH`, then use only that name
+  in subsequent examples. Note other supported architectures in prose.
+- Read the Docs tool pages should lead with a brief purpose, then a real
+  screenshot when one is available, installation, common usage, option
+  reference, and interpretation/limitations as appropriate. Do not include
+  build-from-source instructions or build dependencies on Read the Docs;
+  development instructions belong in repository developer documentation.
+- Keep Chinese and English pages consistent. Do not invent screenshots,
+  release assets, supported options, or privilege guarantees.
+
 ## Release Policy
 
 - Each tool has one current official release, represented by one canonical tag

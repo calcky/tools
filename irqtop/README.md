@@ -9,6 +9,17 @@ first within each section. No Python is needed to run either tool.
 The compiled executable is `irqtop`; `irqstat` is a relative symlink to it.
 The invoked command name selects the display mode and defaults.
 
+## Installation
+
+Example for x86_64; see [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/irqtop-release/irqtop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 irqtop-linux-x86_64 "$HOME/.local/bin/irqtop"
+ln -sfn irqtop "$HOME/.local/bin/irqstat"
+```
+
 ## Common commands
 
 ```sh
@@ -202,9 +213,9 @@ From the tools repository root:
 ```sh
 make                    # Build irqtop/target/release/irqtop and populate bin/
 make check              # Formatting, unit tests and Clippy
-./bin/irqtop -n
-./bin/irqstat -n 1 5
-sudo make install       # /usr/local/bin/irqtop and irqstat -> irqtop
+irqtop -n
+irqstat -n 1 5
+make install PREFIX="$HOME/.local"  # irqtop and irqstat in ~/.local/bin
 ```
 
 Use `make install PREFIX="$HOME/.local"` for a per-user install. `DESTDIR` is
@@ -217,8 +228,8 @@ To build directly with Cargo:
 cd irqtop
 cargo build --release --locked
 ln -sfn irqtop target/release/irqstat
-./target/release/irqtop -n
-./target/release/irqstat -n 1 5
+irqtop -n
+irqstat -n 1 5
 ```
 
 Only one binary is compiled. The command name `irqstat` selects the plain
@@ -229,7 +240,7 @@ names below, select irqtop mode.
 
 The `Build irqtop` workflow builds static Linux executables with musl, Rust
 1.96.0 and cross 0.2.5. It runs on changes to `irqtop/` or the workflow, on
-`irqtop-v*` tags, and manually from Actions > Build irqtop > Run workflow.
+the `irqtop-release` tag, and manually from Actions > Build irqtop > Run workflow.
 
 | Download | Rust target |
 | --- | --- |
@@ -243,16 +254,15 @@ executable with `archive: false`. Download the file for your architecture from
 the run's Artifacts section. No archive extraction is needed; the download has
 no irqstat link or README. Artifacts are kept for 30 days.
 
-Pushing a tag matching `irqtop-v<VERSION>` publishes a GitHub Release after all
-three architecture builds pass. The tag version must match `Cargo.toml`.
+Pushing the `irqtop-release` tag publishes or updates the canonical GitHub Release
+after all three architecture builds pass. The program version comes from `Cargo.toml`.
 The release attaches the same three uncompressed executables, available from
 [Releases](https://github.com/calcky/tools/releases) without artifact expiry.
 
-For x86_64, make the downloaded file executable and run it directly:
+For x86_64, install the release executable as shown above, then run it by name:
 
 ```sh
-chmod +x irqtop-linux-x86_64
-./irqtop-linux-x86_64 -n
+irqtop -n
 ```
 
 Use the executable for the target machine's architecture. ARM requires ARMv7

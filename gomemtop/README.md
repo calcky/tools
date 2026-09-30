@@ -17,16 +17,24 @@ import (
 go func() { log.Println(http.ListenAndServe("127.0.0.1:6060", nil)) }()
 ```
 
-Download `gomemtop-linux-x86_64`, `gomemtop-linux-arm64`, or
-`gomemtop-linux-arm` from the
-[gomemtop release](https://github.com/calcky/tools/releases/tag/gomemtop-release),
-make it executable, and run it in an interactive terminal.
+## Installation
+
+Install the x86_64 executable from the
+[gomemtop release](https://github.com/calcky/tools/releases/tag/gomemtop-release).
+ARM64 and ARMv7 executables are also available there.
 
 ```sh
-make gomemtop
-bin/gomemtop http://127.0.0.1:6060
-bin/gomemtop -i 10 -T 5 http://127.0.0.1:6060/debug/pprof/heap
-bin/gomemtop --pid 1234 http://127.0.0.1:6060
+curl -fLO https://github.com/calcky/tools/releases/download/gomemtop-release/gomemtop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 gomemtop-linux-x86_64 "$HOME/.local/bin/gomemtop"
+```
+
+Make sure `$HOME/.local/bin` is on `PATH`. Run the tool in an interactive terminal:
+
+```sh
+gomemtop http://127.0.0.1:6060
+gomemtop -i 10 -T 5 http://127.0.0.1:6060/debug/pprof/heap
+gomemtop -p 1234 http://127.0.0.1:6060
 ```
 
 The first successful profile becomes the baseline. The main table ranks full
@@ -42,6 +50,7 @@ top trend retains the most recent 60 successful values of the selected metric.
 | `m` | Toggle in-use / cumulative allocation metric |
 | `b` | Set the current sample as baseline |
 | `g` | Toggle `?gc=1`; discard prior samples and establish a new baseline |
+| `d` | Toggle the detailed RSS analysis view (`--pid` only) |
 | Space | Pause/resume automatic sampling |
 | `r` | Request the next sample immediately |
 | `q`, Ctrl+C | Quit and restore the terminal |
@@ -49,14 +58,14 @@ top trend retains the most recent 60 successful values of the selected metric.
 The default interval is 30 seconds and the request timeout is 10 seconds.
 `-i` changes the interval in seconds; `-T` changes the HTTP timeout in seconds.
 Both the server root and a complete `/debug/pprof/heap` URL are accepted.
-`--pid` samples the target's Linux `/proc/PID/smaps_rollup` and `status` at the
+`-p PID` samples the target's Linux `/proc/PID/smaps_rollup` and `status` at the
 same interval. It displays resident RSS, anonymous pages, file pages, shared
 memory, and (when `smaps_rollup` is readable) private/shared residency. If
 `smaps_rollup` is unavailable, it still shows RSS from `/proc/PID/status`. The
 PID must be visible in the tool's PID namespace; if neither proc file exists,
 RSS is explicitly unavailable. On a remote pprof target run `gomemtop` on the
 target host. The file-page value from `smaps_rollup` is an approximation, not
-an exact mmap classification. With `--pid`, a second pprof request also reads
+an exact mmap classification. With `-p`, a second pprof request also reads
 Go MemStats:
 `HeapSys` is reserved heap address space, `HeapReleased` has been returned to
 the OS, the optional stack field is Go stack allocation, and `Sys` is runtime-obtained
@@ -70,7 +79,15 @@ and heap samples. It compares RSS growth with live heap, Go heap retained by
 the runtime, anonymous pages, and file/shared pages. The displayed deltas are
 the evidence for a directional hint, never a leak verdict. Pressing `b` or
 switching GC mode starts a new comparison window. The window keeps at most 60
-samples; on a remote target or without `--pid`, no RSS diagnosis is shown.
+samples; on a remote target or without `-p`, no RSS diagnosis is shown.
+Press `d` for a detailed breakdown of `HeapAlloc`, retained idle heap
+(`HeapIdle - HeapReleased`), in-use span slack (`HeapInuse - HeapAlloc`), and
+approximate heap-held pages (`HeapSys - HeapReleased`) against RSS. The view
+also prioritizes investigation and optimization directions based on the
+largest measured contributors. These counters are not an exact RSS partition;
+`HeapAlloc` can include objects awaiting GC, and the RSS-minus-heap estimate
+is not automatically native memory or a leak. Use `j/k` or
+PageUp/PageDown to scroll the analysis on smaller terminals.
 Sampling does not trigger GC unless `g` enables it. Forcing GC affects the
 target's latency; comparisons across GC modes are deliberately discarded.
 Requests and protobuf parsing run off the UI thread. Failed requests leave the

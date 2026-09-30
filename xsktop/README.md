@@ -4,6 +4,16 @@
 discovers sockets through `NETLINK_SOCK_DIAG` and measures traffic at the XSK
 kernel paths with CO-RE eBPF probes. It does not modify the XDP program.
 
+## Installation
+
+Example for x86_64; see [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/xsktop-release/xsktop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 xsktop-linux-x86_64 "$HOME/.local/bin/xsktop"
+```
+
 ## Kernel requirements
 
 The running kernel needs these options (the build-time kernel headers alone
@@ -32,10 +42,10 @@ The BPF probes also require the named XSK kernel functions to exist and be
 attachable on the running kernel; config options alone cannot guarantee that.
 
 ```sh
-sudo xsktop                 # all XSKs in the current network namespace
-sudo xsktop -i eth0         # one interface
-sudo xsktop -d 0.5          # refresh every 500 ms
-sudo xsktop -c 5 -d 1 > xsktop.txt  # five measured text samples, no TTY needed
+xsktop                 # all XSKs in the current network namespace
+xsktop -i eth0         # one interface
+xsktop -d 0.5          # refresh every 500 ms
+xsktop -c 5 -d 1 > xsktop.txt  # five measured text samples, no TTY needed
 ```
 
 `j/k` or arrow keys select a socket, `q` quits. Click the Q or a rate/error
@@ -124,7 +134,7 @@ On distributions where Rust does not find the multiarch static libraries, set
 ```sh
 make xsktop
 make check-xsktop
-sudo bin/xsktop
+xsktop
 ```
 
 `make` resolves the static library directory with `pkg-config`. To run the

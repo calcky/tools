@@ -13,10 +13,14 @@ pub struct Memory {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RuntimeMemory {
+    pub heap_alloc: Option<u64>,
+    pub heap_inuse: Option<u64>,
+    pub heap_idle: Option<u64>,
     pub heap_sys: u64,
     pub heap_released: u64,
     pub stack_inuse: Option<u64>,
     pub sys: u64,
+    pub num_gc: Option<u64>,
 }
 
 pub fn parse_runtime(text: &str) -> io::Result<RuntimeMemory> {
@@ -29,10 +33,14 @@ pub fn parse_runtime(text: &str) -> io::Result<RuntimeMemory> {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("missing {key}")))
     };
     Ok(RuntimeMemory {
+        heap_alloc: value("HeapAlloc").or_else(|_| value("Alloc")).ok(),
+        heap_inuse: value("HeapInuse").ok(),
+        heap_idle: value("HeapIdle").ok(),
         heap_sys: value("HeapSys")?,
         heap_released: value("HeapReleased")?,
         stack_inuse: value("Stack").or_else(|_| value("StackInuse")).ok(),
         sys: value("Sys")?,
+        num_gc: value("NumGC").ok(),
     })
 }
 
@@ -127,9 +135,13 @@ mod tests {
 
     #[test]
     fn parses_go_runtime_memory() {
-        let text = "# HeapSys = 1000\n# HeapReleased = 200\n# Stack = 50 / 50\n# Sys = 1300\n";
+        let text = "# Alloc = 500\n# HeapInuse = 700\n# HeapIdle = 300\n# HeapSys = 1000\n# HeapReleased = 200\n# Stack = 50 / 50\n# Sys = 1300\n# NumGC = 4\n";
         let runtime = parse_runtime(text).unwrap();
         assert_eq!(runtime.heap_sys - runtime.heap_released, 800);
+        assert_eq!(runtime.heap_alloc, Some(500));
+        assert_eq!(runtime.heap_inuse, Some(700));
+        assert_eq!(runtime.heap_idle, Some(300));
+        assert_eq!(runtime.num_gc, Some(4));
         assert_eq!(runtime.stack_inuse, Some(50));
         assert_eq!(
             parse_runtime("# HeapSys = 1000\n# HeapReleased = 200\n# Sys = 1300\n")

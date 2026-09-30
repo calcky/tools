@@ -4,12 +4,13 @@
 
 ## 安装
 
-从[下载页面](https://github.com/calcky/tools/releases/tag/bpftrace-release)选择匹配架构的附件。
+其他架构见 [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release)。
 以 x86_64 为例：
 
 ```sh
-chmod +x bpftrace-linux-x86_64
-sudo ./bpftrace-linux-x86_64 --info
+curl -fLO https://github.com/calcky/tools/releases/download/bpftrace-release/bpftrace-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 bpftrace-linux-x86_64 "$HOME/.local/bin/bpftrace"
 ```
 
 程序不依赖目标系统的动态 musl/glibc，但跟踪功能仍取决于内核支持及权限。
@@ -18,18 +19,18 @@ sudo ./bpftrace-linux-x86_64 --info
 
 ```sh
 # 列出系统调用 tracepoint
-sudo ./bpftrace-linux-x86_64 -l 'tracepoint:syscalls:sys_enter_*'
+bpftrace -l 'tracepoint:syscalls:sys_enter_*'
 
 # 打印执行程序的进程名
-sudo ./bpftrace-linux-x86_64 -e \
+bpftrace -e \
   'tracepoint:syscalls:sys_enter_execve { printf("%s\n", comm); }'
 
 # 每秒统计各进程的 read 调用次数
-sudo ./bpftrace-linux-x86_64 -e \
+bpftrace -e \
   'tracepoint:syscalls:sys_enter_read { @[comm] = count(); } interval:s:1 { print(@); clear(@); }'
 
 # 执行已有脚本
-sudo ./bpftrace-linux-x86_64 trace.bt
+bpftrace trace.bt
 ```
 
 按 Ctrl+C 停止跟踪。
@@ -52,4 +53,4 @@ sudo ./bpftrace-linux-x86_64 trace.bt
 - 高频探针和大量打印会影响被测系统，先选择较小的跟踪范围。
 - 本静态版本不提供 `skb_output` 功能。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/bpftrace-release) · [完整说明](https://github.com/calcky/tools/blob/master/bpftrace/README.md) · [上游手册](https://bpftrace.org/docs)
+[完整说明](https://github.com/calcky/tools/blob/master/bpftrace/README.md) · [上游手册](https://bpftrace.org/docs)

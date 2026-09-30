@@ -4,6 +4,16 @@ Linux ICMP, UDP/TCP echo and TCP connection latency in one Rust executable.
 UDP and TCP echo use a paired netping server. ICMP uses the operating system's
 echo responder; TCP connect can target an ordinary listening TCP port.
 
+## Installation
+
+Example for x86_64; see [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netping-release/netping-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netping-linux-x86_64 "$HOME/.local/bin/netping"
+```
+
 ## Common commands
 
 ```sh
@@ -31,7 +41,7 @@ The server listens on all local addresses in the selected family; run separate
 `-4` and `-6` servers if both families are needed. No configuration files or
 runtime are required. UDP/TCP do not need root when using unprivileged ports.
 ICMP first tries a Linux ping socket, then a raw socket. If both are denied,
-run with `sudo`, grant `CAP_NET_RAW`, or allow the user's group through the
+grant `CAP_NET_RAW` or allow the user's group through the
 system's `net.ipv4.ping_group_range` policy.
 
 ## Options
@@ -402,11 +412,11 @@ Run `cross test` and `cross run --release ... -- -v` for each target too.
 
 The `Build netping` GitHub Actions workflow tests and builds static Linux
 executables for ARMv7, ARM64 and x86_64. Branch/PR builds and manual runs
-provide downloadable artifacts. A pushed `netping-vVERSION` tag publishes a
-GitHub Release after all three architectures pass; VERSION must match
-`netping/Cargo.toml`. Keep the package entry in Cargo.lock in sync when bumping
+provide downloadable artifacts. The `netping-release` tag publishes or updates
+the canonical GitHub Release after all three architectures pass. The program
+version comes from `netping/Cargo.toml`; keep the package entry in Cargo.lock in sync when bumping
 the version, then commit the change before tagging.
 
 Release assets are raw executables: `netping-linux-arm`, `netping-linux-arm64`
-and `netping-linux-x86_64`. Download the appropriate file, mark it executable
-with `chmod +x`, and run it directly. There is no archive or runtime to install.
+and `netping-linux-x86_64`. Install the appropriate file under the `netping`
+command name as shown above. There is no archive or runtime to install.

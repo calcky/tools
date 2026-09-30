@@ -10,8 +10,16 @@ The build uses Alpine 3.22/musl and libbpf 1.6.3 at commit
 The pinned source uses libbpf APIs introduced in 1.6, despite the upstream
 README listing 1.4 as its minimum.
 
-Download executables from [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release).
+## Installation
+
+Example for x86_64; see [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) for other architectures.
 The release includes checksums and upstream/dependency licenses.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/nettrace-release/nettrace-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 nettrace-linux-x86_64 "$HOME/.local/bin/nettrace"
+```
 
 ## Build
 
@@ -45,8 +53,8 @@ The BPF object is embedded; clang and bpftool are build dependencies only.
 ## Run
 
 ```sh
-./nettrace/dist/nettrace-linux-x86_64 -V
-sudo ./nettrace/dist/nettrace-linux-x86_64 -p icmp --detail
+nettrace -V
+nettrace -p icmp --detail
 ```
 
 Runtime still requires kernel BTF, the relevant eBPF tracing features, debugfs

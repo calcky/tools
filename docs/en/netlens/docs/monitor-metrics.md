@@ -29,7 +29,7 @@ Slow-source rates average their collection interval and may smooth short bursts.
 ## Diagnose Missing Data
 
 ```sh
-sudo netlens providers
+netlens providers
 ```
 
 Check sources, errors and observation age before diagnosing application problems.
@@ -53,11 +53,10 @@ Zero matches in an incomplete snapshot do not prove no matching connection exist
 
 ```sh
 netlens
-sudo netlens
-sudo ip netns exec lab netlens
+netlens
 ```
 
-Start with visible data as a normal user. `sudo` improves FD, conntrack and NIC source access.
+Start with data visible to the current user. FD, conntrack and NIC sources may require additional privileges; start the tool inside the target network namespace to inspect it.
 `hidepid`, container permissions and security policies may still restrict process scans. Root cannot supply a disabled kernel feature.
 Run inside the namespace you want to observe; `-i` does not switch namespaces.
 

@@ -94,9 +94,9 @@ Boolean operators are `and`/`&&`, `or`/`||`, and `not`/`!`, with precedence
 `dst` qualify `host`, `net`, `port`, and `portrange`:
 
 ```sh
-sudo bin/xpcap -i eth0 'tcp and (dst port 80 or dst port 443)'
-sudo bin/xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
-sudo bin/xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
+xpcap -i eth0 'tcp and (dst port 80 or dst port 443)'
+xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
+xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
 ```
 
 TCP flag constants include `tcp-fin`, `tcp-syn`, `tcp-rst`, `tcp-push`,

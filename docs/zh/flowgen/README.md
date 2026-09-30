@@ -2,6 +2,16 @@
 
 使用配套回显服务端生成多会话 TCP/UDP 负载，记录请求响应并生成离线 RTT 和 HTML 时序报告。
 
+## 安装
+
+以 x86_64 为例；其他架构见 [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/flowgen-release/flowgen-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 flowgen-linux-x86_64 "$HOME/.local/bin/flowgen"
+```
+
 ## 常用命令
 
 目标机器启动服务端：
@@ -73,4 +83,4 @@ flowgen -R results/churn-1
 - `limited`、`skipped` 表示本机容量或调度受限，不是网络丢包。TCP 超时也不是网络丢包率。
 - 会话容量受文件描述符、内存和端口池限制；工具不自动修改 sysctl 或配置 IP。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/flowgen-release) · [完整手册](https://github.com/calcky/tools/blob/master/flowgen/README.md)
+[完整手册](https://github.com/calcky/tools/blob/master/flowgen/README.md)

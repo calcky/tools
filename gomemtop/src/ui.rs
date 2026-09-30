@@ -96,9 +96,16 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
         return;
     }
     let with_diagnosis = app.pid.is_some();
+    let with_analysis = with_diagnosis && app.analysis_open;
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(if with_diagnosis {
+        .constraints(if with_analysis {
+            vec![
+                Constraint::Length(9),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ]
+        } else if with_diagnosis {
             vec![
                 Constraint::Length(9),
                 Constraint::Min(5),
@@ -192,14 +199,15 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
         }
         summary.push(match app.runtime {
             Some(runtime) => line(format!(
-                "Go runtime  HeapSys {}  released {}  stack {}  Sys {}",
+                "Go runtime  HeapSys {}  released {}  stack {}  Sys {}  GC {}",
                 bytes(runtime.heap_sys as i64),
                 bytes(runtime.heap_released as i64),
                 runtime
                     .stack_inuse
                     .map(|n| bytes(n as i64))
                     .unwrap_or_else(|| "-".into()),
-                bytes(runtime.sys as i64)
+                bytes(runtime.sys as i64),
+                runtime.num_gc.map_or_else(|| "-".into(), |n| n.to_string())
             )),
             None => line(match &app.runtime_error {
                 Some(error) => format!("Go runtime  unavailable: {error}"),
@@ -207,7 +215,7 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             }),
         });
     }
-    if with_diagnosis {
+    if with_diagnosis && !with_analysis {
         let hint = crate::diagnosis::analyze(&app.diagnosis_history);
         let (title, evidence) = if app.memory_error.is_some() {
             (
@@ -229,7 +237,7 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             ])
             .block(
                 Block::default()
-                    .title(" Diagnostic hint ")
+                    .title(" Diagnostic hint | d analysis ")
                     .borders(Borders::ALL),
             ),
             layout[3],
@@ -256,6 +264,46 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
             height: 1,
         },
     );
+    if with_analysis {
+        let lines = match app.memory {
+            Some(memory) => crate::diagnosis::report(memory, app.runtime, &app.diagnosis_history),
+            None => vec![
+                "RSS unavailable; cannot explain process memory.".into(),
+                app.memory_error
+                    .as_deref()
+                    .unwrap_or("Waiting for /proc sample")
+                    .into(),
+            ],
+        };
+        let lines: Vec<_> = lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if index == 0 {
+                    Line::from(Span::styled(
+                        value,
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                } else {
+                    line(value)
+                }
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((app.analysis_scroll, 0))
+                .block(
+                    Block::default()
+                        .title(" Memory analysis ")
+                        .borders(Borders::ALL),
+                ),
+            layout[1],
+        );
+        footer(frame, layout[2], app, true);
+        return;
+    }
     let wide = area.width >= 95;
     let header = if wide {
         Row::new(["STACK (LEAF)", "CURRENT", "OBJECTS", "VS LAST", "VS BASE"])
@@ -330,13 +378,26 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
     let mut state = TableState::default().with_selected((!rows.is_empty()).then_some(app.selected));
     frame.render_stateful_widget(table, layout[1], &mut state);
     detail(frame, layout[2], app, rows);
+    footer(
+        frame,
+        layout[if with_diagnosis { 4 } else { 3 }],
+        app,
+        false,
+    );
+}
+
+fn footer(frame: &mut Frame, area: Rect, app: &App, analysis: bool) {
     let error = app
         .error
         .as_deref()
         .or(app.memory_error.as_deref())
         .or(app.runtime_error.as_deref())
         .unwrap_or("No errors");
-    let help = if area.width < 95 {
+    let help = if analysis {
+        "d stacks  j/k scroll  PgUp/Dn page  b base  g GC  Space pause  r sample  q quit"
+    } else if app.pid.is_some() {
+        "j/k move PgUp/Dn d analyze m metric b base g GC Space pause r sample q quit"
+    } else if area.width < 95 {
         "j/k move  PgUp/Dn frames  m metric  b base  g GC  Space pause  r retry  q quit"
     } else {
         "j/k select  PgUp/PgDn stack  m metric  b baseline  g GC  Space pause  r sample  q quit"
@@ -358,7 +419,7 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
                 ),
             )),
         ]),
-        layout[if with_diagnosis { 4 } else { 3 }],
+        area,
     );
 }
 
@@ -465,6 +526,44 @@ mod tests {
         assert!(text.contains("Go runtime"));
         assert!(text.contains("missing HeapSys"));
         assert!(!text.contains("waiting for pprof MemStats"));
+
+        with_pid.memory_error = None;
+        with_pid.runtime_error = None;
+        with_pid.memory = Some(crate::process::Memory {
+            rss: 434 * 1024 * 1024,
+            anonymous: 424 * 1024 * 1024,
+            file: 10 * 1024 * 1024,
+            ..crate::process::Memory::default()
+        });
+        with_pid.runtime = Some(crate::process::RuntimeMemory {
+            heap_alloc: Some(234 * 1024 * 1024),
+            heap_inuse: Some(318 * 1024 * 1024),
+            heap_idle: Some(192 * 1024 * 1024),
+            heap_sys: 510 * 1024 * 1024,
+            heap_released: 108 * 1024 * 1024,
+            stack_inuse: Some(2 * 1024 * 1024),
+            sys: 531 * 1024 * 1024,
+            num_gc: Some(441),
+        });
+        with_pid.analysis_open = true;
+        for (w, h) in [(80, 24), (120, 32), (60, 16)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|frame| draw(frame, &with_pid, &[])).unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<Vec<_>>()
+                .join("");
+            assert!(text.contains("Memory analysis"));
+            assert!(text.contains("HeapAlloc"));
+            if (w, h) == (80, 24) {
+                assert!(text.contains("Optimize:"));
+                assert!(text.contains("not an exact RSS partition"));
+            }
+        }
     }
     #[test]
     fn units_and_signs() {

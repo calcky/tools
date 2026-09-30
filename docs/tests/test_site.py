@@ -14,7 +14,7 @@ import markdown
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = Path(os.environ.get("DOCS_SITE_DIR", ROOT / "site"))
-TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace", "nettrace", "netcap", "xsktop")
+TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace", "nettrace", "netcap", "xpcap", "xsktop", "gomemtop")
 NETLENS_REFERENCE = (
     "netlens/docs/cli",
     "netlens/docs/interfaces",
@@ -185,6 +185,7 @@ class BilingualSite(unittest.TestCase):
         self.assertFalse((SITE / "generate.py").exists())
         self.assertFalse((SITE / "hooks.py").exists())
         self.assertFalse((SITE / "tests").exists())
+        self.assertFalse((SITE / "superpowers").exists())
         self.assertFalse((ROOT / "uping").exists())
 
     def test_download_links_are_canonical(self):
@@ -194,6 +195,18 @@ class BilingualSite(unittest.TestCase):
                 self.assertIn(expected, [link["href"] for link in doc.links])
             for link in doc.links:
                 self.assertNotRegex(link["href"], r"releases/(tag|download)/[^/]+-v\d")
+
+    def test_tool_pages_use_installation_and_bare_commands(self):
+        for locale in ("zh", "en"):
+            for tool in TOOLS:
+                with self.subTest(locale=locale, tool=tool):
+                    text = (ROOT / "docs" / locale / tool / "README.md").read_text(encoding="utf-8")
+                    heading = "## 安装" if locale == "zh" else "## Installation"
+                    self.assertIn(heading, text)
+                    self.assertIn(f"releases/download/{tool}-release/{tool}-linux-x86_64", text)
+                    self.assertIn(f'"$HOME/.local/bin/{tool}"', text)
+                    self.assertNotRegex(text, r"(?m)^## (?:构建|Build|下载|Download)\b")
+                    self.assertNotRegex(text, r"(?m)^(?:sudo\s+|\./(?:bin/)?[a-z]+\s|bin/[a-z]+\s)")
 
     def test_readme_links(self):
         for name in ("README.md", "README.en.md"):

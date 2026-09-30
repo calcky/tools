@@ -5,6 +5,17 @@ irqtop is a live window; irqstat prints periodic text reports.
 
 [![irqtop interrupt and softnet window](../../assets/screenshots/irqtop-window.png)](../../assets/screenshots/irqtop-window.png)
 
+## Installation
+
+Example for x86_64; see [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/irqtop-release/irqtop-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 irqtop-linux-x86_64 "$HOME/.local/bin/irqtop"
+ln -sfn irqtop "$HOME/.local/bin/irqstat"
+```
+
 Actual `irqtop -a -m 100 -b` window: interrupt totals, per-CPU rates and softnet together.
 
 ## Common Commands
@@ -73,4 +84,4 @@ IRQ/s is neither PPS nor CPU utilization. NET_RX/NET_TX and softnet are host-wid
 VF labels report host-visible interrupts, not guest IRQs or guest CPU distribution.
 Selecting a PF does not select its VFs. The tools are read-only and do not change IRQ affinity or system settings.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/irqtop-release) · [Full manual](https://github.com/calcky/tools/blob/master/irqtop/README.md)
+[Full manual](https://github.com/calcky/tools/blob/master/irqtop/README.md)

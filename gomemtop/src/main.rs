@@ -16,13 +16,21 @@ use std::{
 #[derive(Parser)]
 #[command(version, about = "Analyze Go heap pprof growth in a terminal window")]
 struct Args {
-    #[arg(value_name = "PPROF_URL")]
+    #[arg(
+        value_name = "PPROF_URL",
+        help = "pprof server URL or complete /debug/pprof/heap URL"
+    )]
     url: String,
-    #[arg(short = 'i', default_value_t = 30.0, value_parser = positive_seconds, value_name = "SECONDS")]
+    #[arg(short = 'i', default_value_t = 30.0, value_parser = positive_seconds, value_name = "SECONDS", help = "Time between heap samples in seconds (0.2-3600)")]
     interval: f64,
-    #[arg(short = 'T', default_value_t = 10.0, value_parser = positive_seconds, value_name = "SECONDS")]
+    #[arg(short = 'T', default_value_t = 10.0, value_parser = positive_seconds, value_name = "SECONDS", help = "Timeout for each pprof HTTP request in seconds (0.2-3600)")]
     timeout: f64,
-    #[arg(long, value_name = "PID")]
+    #[arg(
+        short = 'p',
+        long,
+        value_name = "PID",
+        help = "Local process PID for RSS and Go runtime analysis; must be visible in /proc"
+    )]
     pid: Option<u32>,
 }
 
@@ -95,11 +103,16 @@ fn read_runtime(reader: impl Read) -> Result<process::RuntimeMemory, String> {
             return Err("pprof text exceeds 64 MiB".into());
         }
         if [
+            "# Alloc = ",
+            "# HeapAlloc = ",
+            "# HeapInuse = ",
+            "# HeapIdle = ",
             "# HeapSys = ",
             "# HeapReleased = ",
             "# Stack = ",
             "# StackInuse = ",
             "# Sys = ",
+            "# NumGC = ",
         ]
         .iter()
         .any(|prefix| line.starts_with(prefix))
@@ -168,6 +181,8 @@ struct App {
     next: Instant,
     selected: usize,
     detail_scroll: u16,
+    analysis_open: bool,
+    analysis_scroll: u16,
     current: Option<Snapshot>,
     previous: Option<Snapshot>,
     baseline: Option<Snapshot>,
@@ -200,6 +215,8 @@ impl App {
             next: Instant::now(),
             selected: 0,
             detail_scroll: 0,
+            analysis_open: false,
+            analysis_scroll: 0,
             current: None,
             previous: None,
             baseline: None,
@@ -406,15 +423,35 @@ fn run() -> Result<(), String> {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Esc => break,
                     KeyCode::Down | KeyCode::Char('j') => {
-                        app.selected = (app.selected + 1).min(rows.len().saturating_sub(1));
-                        app.detail_scroll = 0;
+                        if app.analysis_open {
+                            app.analysis_scroll = app.analysis_scroll.saturating_add(1).min(10);
+                        } else {
+                            app.selected = (app.selected + 1).min(rows.len().saturating_sub(1));
+                            app.detail_scroll = 0;
+                        }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        app.selected = app.selected.saturating_sub(1);
-                        app.detail_scroll = 0;
+                        if app.analysis_open {
+                            app.analysis_scroll = app.analysis_scroll.saturating_sub(1);
+                        } else {
+                            app.selected = app.selected.saturating_sub(1);
+                            app.detail_scroll = 0;
+                        }
                     }
-                    KeyCode::PageDown => app.detail_scroll = app.detail_scroll.saturating_add(4),
-                    KeyCode::PageUp => app.detail_scroll = app.detail_scroll.saturating_sub(4),
+                    KeyCode::PageDown => {
+                        if app.analysis_open {
+                            app.analysis_scroll = app.analysis_scroll.saturating_add(4).min(10);
+                        } else {
+                            app.detail_scroll = app.detail_scroll.saturating_add(4);
+                        }
+                    }
+                    KeyCode::PageUp => {
+                        if app.analysis_open {
+                            app.analysis_scroll = app.analysis_scroll.saturating_sub(4);
+                        } else {
+                            app.detail_scroll = app.detail_scroll.saturating_sub(4);
+                        }
+                    }
                     KeyCode::Char('m') => {
                         app.metric = if app.metric == Metric::Inuse {
                             Metric::Alloc
@@ -429,6 +466,10 @@ fn run() -> Result<(), String> {
                         app.detail_scroll = 0;
                     }
                     KeyCode::Char('g') => app.toggle_gc(),
+                    KeyCode::Char('d') if app.pid.is_some() => {
+                        app.analysis_open = !app.analysis_open;
+                        app.analysis_scroll = 0;
+                    }
                     KeyCode::Char('b') => app.reset_baseline(),
                     KeyCode::Char(' ') => {
                         app.paused = !app.paused;
@@ -466,6 +507,26 @@ mod tests {
         );
         assert!(heap_url("file:///tmp/profile").is_err());
         assert!(positive_seconds("NaN").is_err());
+    }
+    #[test]
+    fn help_explains_options_and_accepts_short_pid() {
+        use clap::CommandFactory;
+        let help = Args::command().render_help().to_string();
+        for text in [
+            "pprof server URL",
+            "Time between heap samples",
+            "Timeout for each pprof HTTP request",
+            "-p, --pid",
+            "visible in /proc",
+        ] {
+            assert!(help.contains(text), "missing help: {text}");
+        }
+        let args =
+            Args::try_parse_from(["gomemtop", "-p", "8110", "http://localhost:6060"]).unwrap();
+        assert_eq!(args.pid, Some(8110));
+        let old =
+            Args::try_parse_from(["gomemtop", "--pid", "8110", "http://localhost:6060"]).unwrap();
+        assert_eq!(old.pid, Some(8110));
     }
     #[test]
     fn growth_sort_and_reset() {

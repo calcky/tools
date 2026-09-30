@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory() as directory:
     try:
         wait_until(lambda: server.poll() is None and server_ready(),
                    time.monotonic() + 10, "Go pprof ready")
-        app = subprocess.Popen([str(BIN), "-i", "0.5", "-T", "1", "--pid", str(server.pid), url],
+        app = subprocess.Popen([str(BIN), "-i", "0.5", "-T", "1", "-p", str(server.pid), url],
                                stdin=slave, stdout=slave, stderr=slave,
                                env=dict(os.environ, TERM="xterm-256color"),
                                start_new_session=True)
@@ -93,6 +93,10 @@ with tempfile.TemporaryDirectory() as directory:
         urllib.request.urlopen(url + "/gc", timeout=1).read()
         wait_until(lambda: "main.main.func" in drain() and "MiB" in drain(),
                    time.monotonic() + 8, "heap growth")
+        os.write(master, b"d")
+        wait_until(lambda: "HeapAlloc" in drain() or "Most RSS aligns" in drain(),
+                   time.monotonic() + 3, "RSS analysis view")
+        os.write(master, b"d")
         os.write(master, b"g")
         wait_until(lambda: drain() is not None and counter("gc-count") > 0,
                    time.monotonic() + 5, "GC toggle")

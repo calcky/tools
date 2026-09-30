@@ -29,7 +29,7 @@ TCP 与队列字段在对应场景页解释，避免把不同类型混为同一�
 ## 缺失数据怎么判断
 
 ```sh
-sudo netlens providers
+netlens providers
 ```
 
 先看数据来源、错误和观察年龄，再判断业务是否异常。
@@ -53,11 +53,10 @@ sudo netlens providers
 
 ```sh
 netlens
-sudo netlens
-sudo ip netns exec lab netlens
+netlens
 ```
 
-普通用户可以先看可见数据，`sudo` 可提高进程 FD、conntrack 和 NIC 等来源的可见性。
+普通用户可以先看可见数据。进程 FD、conntrack 和 NIC 等来源可能需要额外权限；要查看其他网络命名空间，请在该命名空间内启动工具。
 `hidepid`、容器权限和安全策略仍可能限制进程扫描；root 不能补齐内核未启用的功能。
 需要观察别的命名空间，应在该命名空间中运行；`-i` 不是命名空间切换。
 

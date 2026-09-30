@@ -1,8 +1,8 @@
-# Installation
+# Getting Started
 
-## Download A Static Executable
+## Installation
 
-Choose a tool from the [overview](index.md#downloads), open its download page, and select your CPU architecture.
+Choose a tool from the [overview](index.md#installation), open its Release, and select your CPU architecture. The example uses x86_64.
 
 | CPU Architecture | Asset Suffix |
 | --- | --- |
@@ -25,27 +25,13 @@ ARMv7 assets do not support ARMv5/ARMv6 or soft-float systems.
 ## Use irqstat
 
 irqstat and irqtop share one executable; the command name selects the display mode.
-After downloading irqtop, create the link:
+After installing irqtop, create the link:
 
 ```sh
 install -m 755 irqtop-linux-x86_64 "$HOME/.local/bin/irqtop"
 ln -sfn irqtop "$HOME/.local/bin/irqstat"
 irqstat -n 1 5
 ```
-
-## Install From Source
-
-Install Rust and a C toolchain first. Current Rust stable is recommended.
-
-```sh
-git clone https://github.com/calcky/tools.git
-cd tools
-make netping
-make install-netping PREFIX="$HOME/.local"
-```
-
-Replace `netping` with `irqtop`, `flowgen`, `cttop` or `netlens` to install that tool.
-For a system-wide install, use `sudo make install-netping`; the default directory is `/usr/local/bin`.
 
 ## Permissions
 

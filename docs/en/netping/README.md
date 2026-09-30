@@ -4,6 +4,16 @@ Measure ICMP, UDP/TCP echo and TCP connection latency, with a three-protocol liv
 
 [![netping live statistics and details for three protocols](../../assets/screenshots/netping-window.png)](../../assets/screenshots/netping-window.png)
 
+## Installation
+
+Example for x86_64; see [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) for other architectures.
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/netping-release/netping-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netping-linux-x86_64 "$HOME/.local/bin/netping"
+```
+
 Loopback test at 100 PPS per protocol. Values illustrate the UI, not cross-host performance.
 
 ## Common Commands
@@ -71,8 +81,8 @@ Each protocol's summary is printed on exit.
 ## Notes
 
 - UDP/TCP echo needs `netping -s`; ICMP and ordinary TCP connection tests do not.
-- If ICMP permission is denied, use `sudo`, `CAP_NET_RAW`, or the system's ping socket permissions.
+- If ICMP permission is denied, configure `CAP_NET_RAW` or the system's ping socket permissions.
 - An exact MTU requires explicit Too Big evidence and a verified reachable size. A timeout may be loss or filtered ICMP.
 - MSS counts TCP payload bytes, not IP MTU. TCP options can reduce send MSS below the handshake advertisement.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/netping-release) · [Full manual](https://github.com/calcky/tools/blob/master/netping/README.md)
+[Full manual](https://github.com/calcky/tools/blob/master/netping/README.md)

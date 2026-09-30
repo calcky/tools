@@ -3,11 +3,18 @@
 [ByteDance netcap](https://github.com/bytedance/netcap) 可在指定内核函数或
 tracepoint 处抓取 skb 报文。此目录提供 1.0.1 版的三架构静态构建。
 
-从 [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release)
-下载 `netcap-linux-x86_64`、`netcap-linux-arm64` 或 `netcap-linux-arm`。
+## 安装
+
+以 x86_64 为例；其他架构见 [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release)。
 
 ```sh
-sudo netcap skb -f icmp_rcv@1 -e 'icmp' -i eth0 -w icmp.pcap -c 10
+curl -fLO https://github.com/calcky/tools/releases/download/netcap-release/netcap-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 netcap-linux-x86_64 "$HOME/.local/bin/netcap"
+```
+
+```sh
+netcap skb -f icmp_rcv@1 -e 'icmp' -i eth0 -w icmp.pcap -c 10
 ```
 
 `skb` 模式需要跟踪权限、debugfs 和与运行内核匹配的已准备头文件。自定义内核可设置

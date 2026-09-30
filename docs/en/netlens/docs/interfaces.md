@@ -3,10 +3,10 @@
 ## Drill Down From An Interface
 
 ```sh
-sudo netlens -i eth0,eth1 interface
-sudo netlens qdisc
-sudo netlens hardirq
-sudo netlens softirq
+netlens -i eth0,eth1 interface
+netlens qdisc
+netlens hardirq
+netlens softirq
 ```
 
 Interface combines traffic and settings. Select a device and press Enter for its layer details.
@@ -44,7 +44,7 @@ Missing settings remain `n/a`. Check Providers for driver support and permission
 ## Inspect qdisc Queues And Drops
 
 ```sh
-sudo netlens qdisc
+netlens qdisc
 ```
 
 | Metric | Meaning |
