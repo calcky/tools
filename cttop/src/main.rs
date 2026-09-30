@@ -5,6 +5,7 @@ mod model;
 mod netlink;
 mod offline;
 mod options;
+mod summary;
 mod ui;
 
 use std::{
@@ -49,6 +50,9 @@ fn run() -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed)).map_err(|e| e.to_string())?;
+    if o.summary {
+        return run_summary(&mut engine, &o, &stop);
+    }
     if o.input.is_some() {
         return run_offline(&o, &mut engine, &stop);
     }
@@ -137,6 +141,41 @@ fn run() -> Result<(), String> {
         }
     }
     Ok(())
+}
+fn run_summary(
+    engine: &mut engine::Engine,
+    o: &options::Options,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let started = Instant::now();
+    while !engine.ready || engine.stale {
+        if stop.load(Ordering::Relaxed) {
+            return Err("snapshot interrupted".into());
+        }
+        engine.pump().map_err(diagnostic)?;
+        if engine.ready && !engine.stale {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(35) {
+            return Err(format!(
+                "initial conntrack snapshot unavailable: {}",
+                engine.message
+            ));
+        }
+        let mut fd = libc::pollfd {
+            fd: engine.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut fd, 1, 100) };
+        if result < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return Err(diagnostic(io::Error::last_os_error()));
+        }
+    }
+    if engine.offline_at.is_none() {
+        engine.health.sample();
+    }
+    summary::write(engine, o, &mut io::stdout().lock()).map_err(diagnostic)
 }
 fn run_offline(
     o: &options::Options,

@@ -18,7 +18,10 @@ sudo ./bin/cttop -g dport -r 1    # sample bandwidth roughly every second
 sudo ./bin/cttop -N -g src,sport
 sudo ./bin/cttop -s 192.168.1.10 -D 443 -p tcp
 sudo ./bin/cttop -b -c 3         # plain reports
+sudo ./bin/cttop summary         # analyze one complete live snapshot and exit
 ./bin/cttop -f conntrack.txt     # static snapshot, no root required
+./bin/cttop summary -f conntrack.txt
+sudo conntrack -L | ./bin/cttop summary -f
 sudo conntrack -L | ./bin/cttop -f
 sudo ip netns exec router ./bin/cttop
 ```
@@ -28,7 +31,8 @@ namespace, an active conntrack subsystem and ctnetlink support. `sudo` is the us
 way to obtain permission. Containers need access to the namespace being diagnosed;
 running inside an ordinary container shows that container's connections only.
 The tool is named `cttop` to distinguish it from container-monitoring tools.
-Future releases provide `cttop-linux-arm` (ARMv7 hard-float),
+The [v0.2.0 release](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0)
+provides `cttop-linux-arm` (ARMv7 hard-float),
 `cttop-linux-arm64`, and `cttop-linux-x86_64` as direct musl static binary downloads.
 Apply `chmod +x` before running. The previously published
 [ctop v0.1.0](https://github.com/calcky/tools/releases/tag/ctop-v0.1.0)
@@ -41,6 +45,7 @@ publishes version-tagged releases.
 | Option | Meaning |
 | --- | --- |
 | `-f [FILE]` | Load a static `conntrack -L` text snapshot; no filename or `-` reads stdin until EOF |
+| `summary` | Analyze one complete snapshot and exit; works with live, file and piped input (`--summary` remains accepted) |
 | `-g FIELDS` | Comma-separated `src,sport,dst,dport,proto,zone,mark`; default `src`; `none` lists individual CT entries |
 | `-N` | Group by translated forward endpoints, obtained by reversing the reply tuple |
 | `-s IP`, `-d IP` | Exact original source/destination IP, IPv4 or IPv6 |
@@ -58,6 +63,21 @@ publishes version-tagged releases.
 Filters always use original tuples, even in the NAT view. Groups with different
 original/reply zones remain separate. ICMP has an ID/type/code identity, not port 0;
 port aggregation displays `-` for protocols without ports.
+
+`cttop summary` prints a single snapshot report and exits. It prints snapshot
+occupancy (live only), protocol and TCP-state
+distribution, NAT/unreplied counts, original/reply packet and byte totals with
+counter coverage, and the top five sources, destinations, services and marks.
+The report uses two columns on terminals at least 110 columns wide and stacks
+sections on narrower terminals; redirected output uses 80 columns. Destinations
+combine all ports and protocols for the same target IP; services keep protocol
+and port separate. `-N` changes the top endpoint view;
+`-s/-d/-S/-D/-p/-z` filter analyzed entries. Kernel
+occupancy and cumulative insert failures/drops always describe the whole live
+namespace, not the filtered subset. Threshold flags are prompts to investigate,
+not fault diagnoses. A single snapshot cannot provide bandwidth, lifecycle
+rates or observed state age. `summary` cannot be combined with periodic-report
+or grouping options (`-b/-c/-g/-i/-r/-W/-m`).
 
 ## Static Files
 

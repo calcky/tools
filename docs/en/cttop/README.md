@@ -26,16 +26,22 @@ sudo cttop -N -g src,sport
 # Three periodic text reports
 sudo cttop -b -c 3
 
+# Analyze one current conntrack snapshot and exit
+sudo cttop summary
+
 # Export and load a snapshot, or read from a pipe
 sudo conntrack -L -o extended > conntrack.txt
 cttop -f conntrack.txt
+cttop summary -f conntrack.txt
 sudo conntrack -L | cttop -f
+sudo conntrack -L | cttop summary -f
 ```
 
 ## Key Options
 
 | Option | Meaning |
 | --- | --- |
+| `summary` | Analyze one snapshot and exit; `--summary` remains accepted |
 | `-g FIELDS` | Group by `src,sport,dst,dport,proto,zone,mark`; `none` lists individual connections |
 | `-N` | Show translated forward endpoints |
 | `-s IP` / `-d IP` | Original source / destination IP filter |
@@ -57,6 +63,13 @@ Packet and byte counters require kernel conntrack accounting; missing counters s
 Bandwidth uses byte differences between samples. Partial coverage is explicit;
 missing data is not treated as zero traffic.
 
+`summary` reports protocol and TCP-state distributions, top sources,
+destinations, services and marks, plus NAT and unreplied signals. Packet and
+byte totals show counter coverage; live snapshots also include kernel table
+occupancy and cumulative failure/drop counters. A single snapshot cannot infer
+bandwidth, creation rates or connection age. `summary` accepts `-N` and connection
+filters, but not periodic-report or grouping options (`-b/-c/-g/-i/-r/-W/-m`).
+
 ## Window Keys
 
 | Key | Action |
@@ -77,4 +90,4 @@ but cannot calculate bandwidth, creation rates or connection age.
 Command-line IP/port filters always match original tuples, including in the NAT view.
 The tool is read-only; it does not change firewall rules or enable accounting automatically.
 
-[Static downloads](https://github.com/calcky/tools/releases/tag/cttop-release) · [Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[Static downloads](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0) · [Full manual](https://github.com/calcky/tools/blob/master/cttop/README.md)

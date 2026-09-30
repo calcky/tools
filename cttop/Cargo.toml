@@ -1,6 +1,6 @@
 [package]
 name = "cttop"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 
@@ -9,6 +9,7 @@ libc = "0.2"
 ratatui = { version = "0.29", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 crossterm = "0.28"
 ctrlc = { version = "3", features = ["termination"] }
+unicode-width = "0.2"
 
 [profile.release]
 lto = true

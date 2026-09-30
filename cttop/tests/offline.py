@@ -104,6 +104,15 @@ with tempfile.TemporaryDirectory() as directory:
     output = report(["-f", str(path), "-N", "-s", "10.0.0.2", "-g", "none"])
     assert "203.0.113.1:40000" in output and "1 connections" in output
     assert "::1" not in output
+    for mode in ("summary", "--summary"):
+        output = report([mode, "-f", str(path)])
+        assert "cttop summary" in output and "2 in file" in output
+        assert "TOP SOURCES" in output and "10.0.0.2" in output
+        assert "\x1b" not in output
+    output = report(["summary", "-f"], DUMP)
+    assert "cttop summary" in output and "2 in file" in output
+    error = sp.run([BIN, "summary", "-c", "1"], capture_output=True, text=True)
+    assert error.returncode != 0 and "summary cannot be combined" in error.stderr
     error = sp.run([BIN, "-f"], input="# comment\nbad\n", text=True, capture_output=True, timeout=3)
     assert error.returncode != 0 and "stdin:2:" in error.stderr
     assert "No matching sessions" in report(["-f"], "")

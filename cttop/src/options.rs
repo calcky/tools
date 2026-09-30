@@ -3,6 +3,8 @@ use std::time::Duration;
 
 pub const HELP: &str = "cttop - read-only conntrack session monitor
 Usage: cttop [options]
+       cttop summary [options]
+  summary    Analyze one complete snapshot and exit (--summary also accepted)
   -f [FILE]  Load a static conntrack -L dump; omitted FILE or - reads stdin
   -g FIELDS  Group by src,sport,dst,dport,proto,zone,mark (default src); none = one CT per row
   -N         Translated forward/NAT endpoint view (default original)
@@ -28,6 +30,8 @@ Ctrl+U clears an edit field, h help (h/Esc closes), q/Ctrl+C quit.
 
 Live mode requires CAP_NET_ADMIN; static files need no privileges. Example:
   cttop -f conntrack.txt -g mark
+  cttop summary -f conntrack.txt
+  sudo cttop summary
   conntrack -L | cttop -f
   sudo cttop -g dst,dport,proto -p tcp
   sudo ip netns exec router cttop -N
@@ -49,6 +53,7 @@ pub struct Options {
     pub minimum: u64,
     pub batch: bool,
     pub count: Option<usize>,
+    pub summary: bool,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -63,6 +68,7 @@ impl Default for Options {
             minimum: 0,
             batch: false,
             count: None,
+            summary: false,
         }
     }
 }
@@ -74,12 +80,21 @@ pub enum Command {
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut args = args.into_iter().peekable();
     let mut o = Options::default();
+    if args.peek().is_some_and(|arg| arg == "summary") {
+        args.next();
+        o.summary = true;
+    }
+    let mut summary_conflicts = Vec::new();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" => return Ok(Command::Help),
             "-v" => return Ok(Command::Version),
             "-N" => o.nat = true,
-            "-b" => o.batch = true,
+            "--summary" => o.summary = true,
+            "-b" => {
+                o.batch = true;
+                summary_conflicts.push(arg);
+            }
             "-f" => {
                 if o.input.is_some() {
                     return Err("-f may only be specified once".into());
@@ -93,6 +108,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 );
             }
             "-g" | "-s" | "-d" | "-S" | "-D" | "-p" | "-z" | "-i" | "-r" | "-W" | "-m" | "-c" => {
+                if matches!(arg.as_str(), "-g" | "-i" | "-r" | "-W" | "-m" | "-c") {
+                    summary_conflicts.push(arg.clone());
+                }
                 let value = args
                     .next()
                     .ok_or_else(|| format!("{arg} requires a value"))?;
@@ -147,6 +165,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             _ => return Err(format!("unknown option {arg}; use -h")),
         }
     }
+    if o.summary && !summary_conflicts.is_empty() {
+        return Err(format!(
+            "summary cannot be combined with {}",
+            summary_conflicts.join(", ")
+        ));
+    }
     Ok(Command::Run(o))
 }
 #[cfg(test)]
@@ -196,5 +220,34 @@ mod tests {
             assert_eq!(o.input.as_deref(), Some(source));
         }
         assert!(run("-f a -f b").is_err());
+        let Command::Run(o) = run("--summary -f ct.txt -N -p tcp").unwrap() else {
+            panic!()
+        };
+        assert!(o.summary && o.nat && o.input.as_deref() == Some("ct.txt"));
+        let Command::Run(o) = run("summary -f ct.txt -N -p tcp").unwrap() else {
+            panic!()
+        };
+        assert!(o.summary && o.nat && o.input.as_deref() == Some("ct.txt"));
+        let Command::Run(o) = run("summary -f").unwrap() else {
+            panic!()
+        };
+        assert_eq!(o.input.as_deref(), Some("-"));
+        let Command::Run(o) = run("-f summary").unwrap() else {
+            panic!()
+        };
+        assert_eq!(o.input.as_deref(), Some("summary"));
+        for args in [
+            "--summary -c 1",
+            "-g src --summary",
+            "--summary -b",
+            "--summary -r 1",
+            "summary -c 1",
+            "summary -g src",
+            "summary -b",
+            "summary -r 1",
+            "-N summary",
+        ] {
+            assert!(run(args).is_err(), "{args}");
+        }
     }
 }

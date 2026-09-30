@@ -26,16 +26,22 @@ sudo cttop -N -g src,sport
 # 周期文本输出，共三次
 sudo cttop -b -c 3
 
+# 分析一次当前 conntrack 快照并退出
+sudo cttop summary
+
 # 导出后离线读取，或通过管道读取
 sudo conntrack -L -o extended > conntrack.txt
 cttop -f conntrack.txt
+cttop summary -f conntrack.txt
 sudo conntrack -L | cttop -f
+sudo conntrack -L | cttop summary -f
 ```
 
 ## 关键选项
 
 | 选项 | 含义 |
 | --- | --- |
+| `summary` | 分析一次快照并退出；`--summary` 作为兼容写法保留 |
 | `-g FIELDS` | 聚合字段：`src,sport,dst,dport,proto,zone,mark`；`none` 不聚合 |
 | `-N` | 显示 NAT 转换后的正向端点 |
 | `-s IP` / `-d IP` | 原始源 / 目标 IP 筛选 |
@@ -56,6 +62,11 @@ sudo conntrack -L | cttop -f
 包数和字节数需要内核 conntrack accounting 提供计数；缺失时显示 `N/A`。
 带宽根据连续采样的字节差计算，覆盖不完整会明确标记，不将缺失数据当作零流量。
 
+`summary` 汇总协议、TCP 状态、Top 来源/目标/服务/mark、NAT 和未应答连接。
+包数和字节数会标出计数器覆盖范围；实时快照还显示内核连接表占用与累计失败/丢弃计数。
+单次快照不能推算带宽、新建速率或连接年龄。`summary` 可与 `-N` 及连接筛选选项组合，
+不能与周期报告或聚合选项 `-b/-c/-g/-i/-r/-W/-m` 组合。
+
 ## 窗口按键
 
 | 按键 | 操作 |
@@ -75,4 +86,4 @@ sudo conntrack -L | cttop -f
 命令行 IP/端口筛选始终匹配原始五元组，即使当前使用 NAT 视图。
 工具只读，不修改防火墙或自动启用 accounting。
 
-[下载静态程序](https://github.com/calcky/tools/releases/tag/cttop-release) · [完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)
+[下载静态程序](https://github.com/calcky/tools/releases/tag/cttop-v0.2.0) · [完整手册](https://github.com/calcky/tools/blob/master/cttop/README.md)

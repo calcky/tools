@@ -1,15 +1,17 @@
-# cttop v0.1.0
+# cttop v0.2.0
 
-Initial release of the Linux conntrack session monitor.
+Analyze a single conntrack snapshot with `cttop summary` and exit. The live
+monitor and interactive static-file view remain unchanged.
 
-- Live connection tracking with snapshots and lifecycle events, original/NAT views,
-  and grouping by IP, port, protocol, zone or conntrack mark.
-- Nested group drilldown, one-connection-per-row view, search, filters and terminal help.
-- Directional bandwidth, cumulative packet/byte counters, state distributions and
-  diagnostic hints, with explicit unavailable/partial data indicators.
-- Static conntrack text snapshots: `cttop -f connections.txt` or `conntrack -L | cttop -f`.
-  Offline viewing needs no root and preserves grouping, search and NAT inspection.
-- Adaptive terminal layout, monochrome support and plain reports.
+- One-shot overview, protocol and TCP-state distributions, top sources,
+  destinations, services and marks, plus NAT and unreplied signals.
+- Saved packet/byte totals report counter coverage; unavailable data stays `N/A`.
+- Live snapshots include kernel occupancy and cumulative failure/drop counters.
+  Static files and pipes work without root: `cttop summary -f connections.txt`.
+- The report uses two columns on wide terminals and stacks sections on narrow
+  terminals. `--summary` remains accepted for compatibility.
+- As with any single snapshot, bandwidth, lifecycle rates and observed state age
+  cannot be inferred from this report.
 
 ## Downloads
 
