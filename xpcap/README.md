@@ -23,7 +23,136 @@ sudo bin/xpcap -i eth0 -S xsk,pcap -w combined.pcapng udp port 9000
 
 `-v` adds IPv4 TOS, TTL, ID, fragment offset/flags, protocol, IP length and header checksum; for IPv6 it adds traffic class, flow label, hop limit, next header and payload length. The checksum is the captured field value, not a validation result; transmit offload can leave it unset. `-e` adds source/destination MAC, EtherType, VLAN ID and priority where an Ethernet header is present. With `-i any`, PCAP uses Linux cooked SLL: `-e` shows packet type and the available link address, not a fabricated source/destination MAC pair. Both flags affect terminal output only; `-w` keeps the original captured bytes.
 
-A trailing tcpdump-style filter expression supports common protocol, host, network, port, range and boolean terms, for example `tcp and port 443`. Simple expressions do not need quotes; use shell quotes around parentheses, as in `'tcp and (port 80 or port 443)'`. The expression is the only packet-content filter. It is compiled to classic BPF: named-interface `pcap` sockets attach it in the kernel, while XDP/XSK probes evaluate it in the kernel before copying packet data into a perf event. For `-i any`, the cooked PCAP filter is evaluated in userspace after receive; this can be costly at high traffic rates, and length-sensitive filters see at most the first 9216 payload bytes. XDP/XSK expressions are limited to 128 classic BPF instructions; an unsupported or oversized expression fails at startup rather than falling back to userspace filtering. This is not a full libpcap grammar. The filter can inspect the readable first segment regardless of `-s`; on multi-buffer XDP packets, `len` tests use the full packet length but byte-offset tests cannot inspect later fragments.
+A trailing tcpdump-style filter expression is the only packet-content filter. Simple expressions do not need quotes; use shell quotes around parentheses, `!`, `&&`, `||`, or other shell metacharacters. The supported vocabulary is listed below. It is a libpcap-style subset, not every tcpdump extension.
+
+## Filter syntax
+
+The filter is compiled to classic BPF. On a named interface, the `pcap` socket attaches it in the kernel; XDP/XSK probes evaluate it in the probe before copying packet data into a perf event. With `-i any`, the cooked PCAP filter runs in userspace after receipt, which can be costly at high packet rates. XDP/XSK filters are limited to 128 classic-BPF instructions; an unsupported or oversized expression fails at startup instead of silently falling back to userspace. The filter can inspect the readable first segment regardless of `-s`; on multi-buffer XDP packets, `len` uses the full packet length but byte offsets cannot inspect later fragments.
+
+### Hosts and networks
+
+```text
+host 192.0.2.1                         # source or destination address
+src host 192.0.2.1
+dst host 2001:db8::1
+net 192.0.2.0/24                       # CIDR network
+src net 10.0.0.0/8
+dst net 192.168.0.0 mask 255.255.0.0  # explicit mask
+```
+
+### Ports and protocols
+
+```text
+port 443                               # source or destination port
+tcp port 443
+udp dst port 53
+src port 1234
+portrange 1024-65535
+tcp src portrange 32768-60999
+
+tcp  udp  icmp  icmp6  arp  rarp
+igmp  sctp  ah  esp  pim  vrrp
+ip  ip6
+proto 47                               # raw IP protocol number (GRE)
+```
+
+`port` and `portrange` apply to transport protocols with ports. Use `tcp`,
+`udp`, or another protocol term when the protocol must be restricted.
+
+### Direction and boolean operators
+
+`src` and `dst` qualify `host`, `net`, `port`, and `portrange`. Without a
+qualifier, either endpoint is matched.
+
+```text
+tcp and port 443
+src net 192.0.2.0/24 and dst port 9000
+(port 80 or port 443) and host 192.0.2.1
+tcp and not port 22
+```
+
+Both word and symbol forms are accepted: `and`/`&&`, `or`/`||`, and
+`not`/`!`. Precedence is `not`, then `and`, then `or`; use parentheses when
+that is not the intended grouping.
+
+### Ethernet, VLAN, and tunnels
+
+These terms require a link-layer header and are most useful on a named
+Ethernet interface. They do not fabricate MAC addresses for `-i any` SLL
+packets.
+
+```text
+ether host aa:bb:cc:dd:ee:ff
+ether src aa:bb:cc:dd:ee:ff
+ether dst aa:bb:cc:dd:ee:ff
+ether broadcast
+ether proto 0x0800                    # IPv4
+ether proto 0x0806                    # ARP
+ether proto 0x86dd                    # IPv6
+vlan                                  # any VLAN tag
+vlan 100
+mpls
+mpls 1000
+pppoed                                # PPPoE discovery
+pppoes                                # PPPoE session
+vlan 100 and tcp port 443
+```
+
+### Broadcast, multicast, and packet length
+
+```text
+ip broadcast
+ip multicast
+ip6 multicast
+ether broadcast
+len < 64
+len <= 64
+len = 1500
+len > 1400
+less 64                               # len < 64
+greater 1400                          # len > 1400
+```
+
+### Raw fields and named constants
+
+Raw access uses `layer[offset:size]`, where `size` is `1`, `2`, or `4`; the
+optional mask is applied before the comparison. Supported operators are
+`=`, `!=`, `<`, `<=`, `>`, `>=`, and bit-test `&`.
+
+```text
+ip[9] = 6                              # IPv4 protocol is TCP
+ip[8] < 5                              # IPv4 TTL
+ip[6:2] & 0x1fff != 0                  # IPv4 fragment offset
+tcp[13] & tcp-syn != 0
+udp[4:2] > 20
+icmp[icmptype] = icmp-echo
+icmp6[icmp6type] = 128                  # ICMPv6 echo request
+```
+
+TCP flag constants are `tcp-fin`, `tcp-syn`, `tcp-rst`, `tcp-push`,
+`tcp-ack`, `tcp-urg`, `tcp-ece`, and `tcp-cwr`; `tcpflags` is the TCP flags
+offset. ICMP offsets are `icmptype`, `icmpcode`, `icmp6type`, and
+`icmp6code`. Common IPv4 ICMP constants include `icmp-echoreply`,
+`icmp-unreach`, `icmp-redirect`, `icmp-echo`, `icmp-timxceed`, and
+`icmp-paramprob`.
+
+### Practical combinations
+
+```text
+(udp port 53 or udp port 123)           # DNS or NTP
+tcp and not port 22 and src net 10.0.0.0/8
+icmp and icmp[icmptype] = icmp-echo
+tcp and len > 1200
+arp and ether broadcast
+ip6 and tcp and (dst port 80 or dst port 443)
+esp or ah
+```
+
+`inbound`, `outbound`, and complex IPv6 extension-header traversal are not
+usable in this cBPF path. `ether multicast` is not a reliable filter in the
+underlying compiler; use `ip multicast` or `ip6 multicast`. If an expression
+is not listed here, validate it with `xpcap -h` examples or expect startup to
+report a compile/validation error.
 
 `-w` additionally writes PCAPNG. Named-interface records use Ethernet; with `-i any`, conventional PCAP records use Linux cooked (SLL), while XSK/XDP records retain Ethernet. PCAP-only `any` files are readable by tcpdump; some tcpdump versions reject files containing both cooked and Ethernet records, so use Wireshark/tshark or capture the stages separately for those files. Terminal rows use a tcpdump-like packet summary with separate uppercase source and direction columns, and a queue column (`q-` for PCAP). TCP rows show flags, absolute seq/ack numbers (like `tcpdump -S`), window, common options and TCP payload length. UDP `length` is the UDP payload length; ICMP `length` is the ICMP message length. Non-IP rows use frame length. Truncated packets show the captured frame length and omit unavailable header fields. Terminal rows omit the interface name for one named interface, and show it for multiple interfaces or `any`:
 

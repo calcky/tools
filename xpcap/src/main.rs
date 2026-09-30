@@ -47,7 +47,7 @@ struct PrintOptions {
 #[command(
     version,
     about = "Capture XSK and PCAP packets, with optional XDP/redirect stages",
-    after_help = "Filter examples (tcpdump syntax):\n  xpcap -i any tcp and port 443\n  xpcap -i eth0 udp and dst port 53\n  xpcap -i eth0 -S xsk host 192.0.2.1 and port 9000"
+    after_help = "Filter examples (tcpdump syntax):\n  xpcap -i any tcp and port 443\n  xpcap -i eth0 'host 192.0.2.1 and (tcp or udp)'\n  xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'\n  xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'\n  xpcap -i eth0 'ip6 and (icmp6 or tcp)'\n  xpcap -i eth0 'len > 1400 and not port 22'\n  xpcap -i eth0 -S xsk 'host 192.0.2.1 and port 9000'"
 )]
 struct Args {
     #[arg(
@@ -1257,15 +1257,27 @@ mod tests {
             "-v",
             "-e",
             "xpcap -i any tcp and port 443",
-            "xpcap -i eth0 udp and dst port 53",
-            "xpcap -i eth0 -S xsk host 192.0.2.1 and port 9000",
+            "xpcap -i eth0 'host 192.0.2.1 and (tcp or udp)'",
+            "xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'",
+            "xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'",
+            "xpcap -i eth0 'ip6 and (icmp6 or tcp)'",
+            "xpcap -i eth0 'len > 1400 and not port 22'",
+            "xpcap -i eth0 -S xsk 'host 192.0.2.1 and port 9000'",
         ] {
             assert!(help.contains(text), "missing from help: {text}");
         }
         for example in [
             "tcp and port 443",
-            "udp and dst port 53",
+            "host 192.0.2.1 and (tcp or udp)",
+            "src net 192.0.2.0/24 and dst portrange 8000-9000",
+            "vlan 100 and tcp[tcpflags] & tcp-syn != 0",
+            "ip6 and (icmp6 or tcp)",
+            "len > 1400 and not port 22",
             "host 192.0.2.1 and port 9000",
+            "ether host aa:bb:cc:dd:ee:ff",
+            "arp and ether broadcast",
+            "tcp[13] & tcp-syn != 0",
+            "icmp and icmp[icmptype] = icmp-echo",
         ] {
             pktbaffle::compile(example, LinkType::Ethernet, Target::Classic).unwrap();
         }
