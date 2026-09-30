@@ -1,0 +1,19 @@
+[package]
+name = "xpcap"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Capture XDP and AF_XDP packets at distinct kernel stages"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+ctrlc = "3.5"
+libbpf-rs = { version = "0.26.2", features = ["static"] }
+libbpf-sys = "1.7.0"
+libc = "0.2"
+pktbaffle = { version = "0.2", features = ["vm"] }
+
+[profile.release]
+lto = "thin"
+strip = true

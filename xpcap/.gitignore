@@ -1,0 +1,3 @@
+/target/
+/target-ci-*/
+/bpf/capture.bpf.o

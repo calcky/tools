@@ -5,12 +5,14 @@ NETPING_TARGET_DIR ?= netping/target
 FLOWGEN_TARGET_DIR ?= flowgen/target
 CTTOP_TARGET_DIR ?= cttop/target
 NETLENS_TARGET_DIR ?= netlens/target
+XPCAP_TARGET_DIR ?= xpcap/target
+XPCAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
-.PHONY: all irqtop netping flowgen cttop netlens check check-irqtop check-netping check-flowgen check-cttop check-netlens install install-irqtop install-netping install-flowgen install-cttop install-netlens
+.PHONY: all irqtop netping flowgen cttop netlens xpcap check check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap install install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap
 
-all: irqtop netping flowgen cttop netlens
+all: irqtop netping flowgen cttop netlens xpcap
 
 irqtop:
 	$(CARGO) build --manifest-path irqtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(TARGET_DIR))"
@@ -33,7 +35,11 @@ netlens:
 	$(CARGO) build --manifest-path netlens/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(NETLENS_TARGET_DIR))"
 	install -D -m 755 "$(NETLENS_TARGET_DIR)/release/netlens" bin/netlens
 
-check: check-irqtop check-netping check-flowgen check-cttop check-netlens
+xpcap:
+	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) build --manifest-path xpcap/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(XPCAP_TARGET_DIR))"
+	install -D -m 755 "$(XPCAP_TARGET_DIR)/release/xpcap" bin/xpcap
+
+check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap
 
 check-irqtop:
 	$(CARGO) fmt --manifest-path irqtop/Cargo.toml -- --check
@@ -60,7 +66,12 @@ check-netlens:
 	$(CARGO) test --manifest-path netlens/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(NETLENS_TARGET_DIR))"
 	$(CARGO) clippy --manifest-path netlens/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(NETLENS_TARGET_DIR))" -- -D warnings
 
-install: install-irqtop install-netping install-flowgen install-cttop install-netlens
+check-xpcap:
+	$(CARGO) fmt --manifest-path xpcap/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) test --manifest-path xpcap/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(XPCAP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) clippy --manifest-path xpcap/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(XPCAP_TARGET_DIR))" -- -D warnings
+
+install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap
 
 install-irqtop:
 	test -x bin/irqtop
@@ -82,3 +93,7 @@ install-cttop:
 install-netlens:
 	test -x bin/netlens
 	install -D -m 755 bin/netlens "$(DESTDIR)$(BINDIR)/netlens"
+
+install-xpcap:
+	test -x bin/xpcap
+	install -D -m 755 bin/xpcap "$(DESTDIR)$(BINDIR)/xpcap"
