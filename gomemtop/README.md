@@ -50,14 +50,16 @@ The default interval is 30 seconds and the request timeout is 10 seconds.
 `-i` changes the interval in seconds; `-T` changes the HTTP timeout in seconds.
 Both the server root and a complete `/debug/pprof/heap` URL are accepted.
 `--pid` samples the target's Linux `/proc/PID/smaps_rollup` and `status` at the
-same interval. It displays resident RSS, anonymous pages, approximate file
-pages, shared memory, and private/shared residency. The PID must be visible in
-the tool's PID namespace and `/proc/PID/smaps_rollup` must be readable; on a
-remote pprof target run `gomemtop` on the target host. File pages are estimated
-as RSS minus anonymous and shared-memory pages, so they are not an exact mmap
-classification. With `--pid`, a second pprof request also reads Go MemStats:
+same interval. It displays resident RSS, anonymous pages, file pages, shared
+memory, and (when `smaps_rollup` is readable) private/shared residency. If
+`smaps_rollup` is unavailable, it still shows RSS from `/proc/PID/status`. The
+PID must be visible in the tool's PID namespace; if neither proc file exists,
+RSS is explicitly unavailable. On a remote pprof target run `gomemtop` on the
+target host. The file-page value from `smaps_rollup` is an approximation, not
+an exact mmap classification. With `--pid`, a second pprof request also reads
+Go MemStats:
 `HeapSys` is reserved heap address space, `HeapReleased` has been returned to
-the OS, `StackInuse` is Go stack allocation, and `Sys` is runtime-obtained
+the OS, the optional stack field is Go stack allocation, and `Sys` is runtime-obtained
 memory. These are not mutually exclusive RSS categories, and the HTTP and
 `/proc` observations are not atomic. Go heap profile totals are sampled object
 estimates, not a partition of RSS; the display does not label their difference

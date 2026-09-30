@@ -173,38 +173,59 @@ pub fn draw(frame: &mut Frame, app: &App, rows: &[StackRow]) {
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!(
-                        "  |  anon {}  file ~{}  shmem {}",
+                        "  |  anon {}  file {}  shmem {}",
                         bytes(memory.anonymous as i64),
                         bytes(memory.file as i64),
                         bytes(memory.shmem as i64)
                     )),
                 ]));
-                summary.push(line(format!("Resident pages  private {}  shared {}  |  heap profile is not an RSS partition", bytes(memory.private as i64), bytes(memory.shared as i64))));
+                summary.push(if memory.detailed {
+                    line(format!("Resident pages  private {}  shared {}  |  heap profile is not an RSS partition", bytes(memory.private as i64), bytes(memory.shared as i64)))
+                } else {
+                    line("Resident pages  status only; private/shared breakdown unavailable")
+                });
             }
-            None => summary.push(line(format!("RSS {pid}  waiting for /proc sample"))),
+            None => summary.push(line(match &app.memory_error {
+                Some(error) => format!("RSS {pid}  unavailable: {error}"),
+                None => format!("RSS {pid}  waiting for /proc sample"),
+            })),
         }
         summary.push(match app.runtime {
             Some(runtime) => line(format!(
                 "Go runtime  HeapSys {}  released {}  stack {}  Sys {}",
                 bytes(runtime.heap_sys as i64),
                 bytes(runtime.heap_released as i64),
-                bytes(runtime.stack_inuse as i64),
+                runtime
+                    .stack_inuse
+                    .map(|n| bytes(n as i64))
+                    .unwrap_or_else(|| "-".into()),
                 bytes(runtime.sys as i64)
             )),
-            None => line("Go runtime  waiting for pprof MemStats"),
+            None => line(match &app.runtime_error {
+                Some(error) => format!("Go runtime  unavailable: {error}"),
+                None => "Go runtime  waiting for pprof MemStats".into(),
+            }),
         });
     }
     if with_diagnosis {
         let hint = crate::diagnosis::analyze(&app.diagnosis_history);
+        let (title, evidence) = if app.memory_error.is_some() {
+            (
+                "RSS unavailable; check PID and /proc namespace",
+                "Heap profile alone cannot measure process RSS".to_owned(),
+            )
+        } else {
+            (hint.title, hint.evidence)
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
-                    hint.title,
+                    title,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )),
-                line(hint.evidence),
+                line(evidence),
             ])
             .block(
                 Block::default()
@@ -416,6 +437,34 @@ mod tests {
                 .join("");
             assert!(text.contains("Diagnostic hint"));
         }
+        with_pid.memory = None;
+        with_pid.memory_error = Some("PID not visible".into());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &with_pid, &[])).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(text.contains("RSS"));
+        assert!(text.contains("unavailable"));
+        assert!(!text.contains("waiting for /proc sample"));
+        with_pid.runtime_error = Some("missing HeapSys".into());
+        terminal.draw(|frame| draw(frame, &with_pid, &[])).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(text.contains("Go runtime"));
+        assert!(text.contains("missing HeapSys"));
+        assert!(!text.contains("waiting for pprof MemStats"));
     }
     #[test]
     fn units_and_signs() {

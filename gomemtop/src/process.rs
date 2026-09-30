@@ -8,13 +8,14 @@ pub struct Memory {
     pub shmem: u64,
     pub private: u64,
     pub shared: u64,
+    pub detailed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RuntimeMemory {
     pub heap_sys: u64,
     pub heap_released: u64,
-    pub stack_inuse: u64,
+    pub stack_inuse: Option<u64>,
     pub sys: u64,
 }
 
@@ -30,7 +31,7 @@ pub fn parse_runtime(text: &str) -> io::Result<RuntimeMemory> {
     Ok(RuntimeMemory {
         heap_sys: value("HeapSys")?,
         heap_released: value("HeapReleased")?,
-        stack_inuse: value("Stack")?,
+        stack_inuse: value("Stack").or_else(|_| value("StackInuse")).ok(),
         sys: value("Sys")?,
     })
 }
@@ -50,8 +51,16 @@ fn field(text: &str, name: &str) -> io::Result<u64> {
 }
 
 pub fn read(pid: u32) -> io::Result<Memory> {
-    let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
-    let rollup = fs::read_to_string(format!("/proc/{pid}/smaps_rollup"))?;
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("PID {pid} is not visible in this /proc: {error}"),
+        )
+    })?;
+    let rollup = match fs::read_to_string(format!("/proc/{pid}/smaps_rollup")) {
+        Ok(rollup) => rollup,
+        Err(_) => return read_status(&status),
+    };
     let rss = field(&rollup, "Rss:")?;
     let anonymous = field(&rollup, "Anonymous:")?;
     let shmem = field(&status, "RssShmem:")?;
@@ -65,6 +74,19 @@ pub fn read(pid: u32) -> io::Result<Memory> {
         shmem,
         private,
         shared,
+        detailed: true,
+    })
+}
+
+fn read_status(status: &str) -> io::Result<Memory> {
+    Ok(Memory {
+        rss: field(status, "VmRSS:")?,
+        anonymous: field(status, "RssAnon:")?,
+        file: field(status, "RssFile:")?,
+        shmem: field(status, "RssShmem:")?,
+        private: 0,
+        shared: 0,
+        detailed: false,
     })
 }
 
@@ -83,6 +105,24 @@ mod tests {
         let memory = read(std::process::id()).unwrap();
         assert!(memory.rss > 0);
         assert!(memory.anonymous <= memory.rss);
+        assert!(memory.detailed);
+    }
+
+    #[test]
+    fn status_fallback_keeps_real_rss_without_smaps() {
+        let memory = read_status(
+            "VmRSS: 423000 kB\nRssAnon: 300000 kB\nRssFile: 120000 kB\nRssShmem: 3000 kB\n",
+        )
+        .unwrap();
+        assert_eq!(memory.rss, 423000 * 1024);
+        assert!(!memory.detailed);
+        assert_eq!(memory.file, 120000 * 1024);
+    }
+
+    #[test]
+    fn missing_pid_explains_namespace_visibility() {
+        let error = read(u32::MAX).unwrap_err();
+        assert!(error.to_string().contains("not visible in this /proc"));
     }
 
     #[test]
@@ -90,6 +130,13 @@ mod tests {
         let text = "# HeapSys = 1000\n# HeapReleased = 200\n# Stack = 50 / 50\n# Sys = 1300\n";
         let runtime = parse_runtime(text).unwrap();
         assert_eq!(runtime.heap_sys - runtime.heap_released, 800);
+        assert_eq!(runtime.stack_inuse, Some(50));
+        assert_eq!(
+            parse_runtime("# HeapSys = 1000\n# HeapReleased = 200\n# Sys = 1300\n")
+                .unwrap()
+                .stack_inuse,
+            None
+        );
         assert!(parse_runtime("# Sys = 1\n").is_err());
     }
 }

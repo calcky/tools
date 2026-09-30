@@ -7,7 +7,7 @@ use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use profile::{Snapshot, Values};
 use std::{
-    io::{self, IsTerminal, Read},
+    io::{self, BufRead, BufReader, IsTerminal, Read},
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -80,13 +80,35 @@ fn fetch_runtime(url: &str, timeout: Duration) -> Result<process::RuntimeMemory,
         .get(&format!("{url}?debug=1"))
         .call()
         .map_err(|e| e.to_string())?;
-    let mut text = String::new();
-    response
-        .into_reader()
-        .take(2 * 1024 * 1024)
-        .read_to_string(&mut text)
-        .map_err(|e| e.to_string())?;
-    process::parse_runtime(&text).map_err(|e| e.to_string())
+    read_runtime(response.into_reader())
+}
+
+fn read_runtime(reader: impl Read) -> Result<process::RuntimeMemory, String> {
+    const MAX_TEXT: usize = 64 * 1024 * 1024;
+    let reader = BufReader::new(reader.take((MAX_TEXT + 1) as u64));
+    let mut seen = 0;
+    let mut fields = String::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        seen += line.len() + 1;
+        if seen > MAX_TEXT {
+            return Err("pprof text exceeds 64 MiB".into());
+        }
+        if [
+            "# HeapSys = ",
+            "# HeapReleased = ",
+            "# Stack = ",
+            "# StackInuse = ",
+            "# Sys = ",
+        ]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
+        {
+            fields.push_str(&line);
+            fields.push('\n');
+        }
+    }
+    process::parse_runtime(&fields).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -227,7 +249,11 @@ impl App {
                         fresh_memory = Some(memory);
                         self.memory_error = None;
                     }
-                    Err(error) => self.memory_error = Some(error),
+                    Err(error) => {
+                        self.memory = None;
+                        self.memory_error = Some(error);
+                        self.diagnosis_history.clear();
+                    }
                 }
             }
             if let Some(runtime) = result.runtime {
@@ -506,5 +532,17 @@ mod tests {
         assert!(app.gc);
         assert!(!app.gc_queued);
         assert!(app.baseline.is_none());
+    }
+
+    #[test]
+    fn reads_memstats_after_large_pprof_text() {
+        let mut body = vec![b'x'; 3 * 1024 * 1024];
+        body.push(b'\n');
+        body.extend_from_slice(
+            b"# HeapSys = 10485760\n# HeapReleased = 1048576\n# Sys = 12582912\n",
+        );
+        let stats = read_runtime(body.as_slice()).unwrap();
+        assert_eq!(stats.heap_sys, 10485760);
+        assert_eq!(stats.stack_inuse, None);
     }
 }
