@@ -21,8 +21,8 @@ pub const FLAG_COOKED: u8 = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Stage {
-    XdpIn = 1,
-    XdpOut = 2,
+    XdpEntry = 1,
+    XdpExit = 2,
     Redirect = 3,
     XskRx = 4,
     XskTx = 5,
@@ -31,8 +31,8 @@ pub enum Stage {
 
 impl Stage {
     pub const ALL: [Self; 6] = [
-        Self::XdpIn,
-        Self::XdpOut,
+        Self::XdpEntry,
+        Self::XdpExit,
         Self::Redirect,
         Self::XskRx,
         Self::XskTx,
@@ -41,8 +41,8 @@ impl Stage {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::XdpIn => "xdp-in",
-            Self::XdpOut => "xdp-out",
+            Self::XdpEntry => "xdp-entry",
+            Self::XdpExit => "xdp-exit",
             Self::Redirect => "redirect",
             Self::XskRx => "xsk-rx",
             Self::XskTx => "xsk-tx",
@@ -60,8 +60,8 @@ impl TryFrom<u8> for Stage {
 
     fn try_from(value: u8) -> Result<Self> {
         Ok(match value {
-            1 => Self::XdpIn,
-            2 => Self::XdpOut,
+            1 => Self::XdpEntry,
+            2 => Self::XdpExit,
             3 => Self::Redirect,
             4 => Self::XskRx,
             5 => Self::XskTx,
@@ -253,7 +253,7 @@ impl<'a> Event<'a> {
         if self.prog_id != 0 {
             parts.push(format!("prog={}", self.prog_id));
         }
-        if self.stage == Stage::XdpOut {
+        if self.stage == Stage::XdpExit {
             const ACTIONS: [&str; 5] = ["ABORTED", "DROP", "PASS", "TX", "REDIRECT"];
             parts.push(format!(
                 "action={}",
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn complete_multi_buffer_packet_is_not_marked_partial() {
         let mut event = Event::packet(2, 123, false, 14, &[0u8; 14]);
-        event.stage = Stage::XdpIn;
+        event.stage = Stage::XdpEntry;
         event.flags = FLAG_XDP_FRAGS;
         assert!(event.detail().contains("multi-buffer"));
         assert!(!event.detail().contains("partial"));

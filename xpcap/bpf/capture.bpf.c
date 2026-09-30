@@ -278,13 +278,13 @@ static __always_inline bool capture_desc(struct sample *sample, struct xsk_buff_
 
 SEC("fentry/func")
 int BPF_PROG(xdp_entry, struct xdp_buff *xdp) {
-    emit_xdp(ctx, xdp, STAGE_XDP_IN, 0);
+    emit_xdp(ctx, xdp, STAGE_XDP_ENTRY, 0);
     return 0;
 }
 
 SEC("fexit/func")
 int BPF_PROG(xdp_exit, struct xdp_buff *xdp, int action) {
-    emit_xdp(ctx, xdp, STAGE_XDP_OUT, action);
+    emit_xdp(ctx, xdp, STAGE_XDP_EXIT, action);
     return 0;
 }
 

@@ -7,8 +7,8 @@
 #define XPCAP_MAX_BATCH 64
 #define XPCAP_MAX_FILTER_INSNS 128
 
-#define STAGE_XDP_IN 1
-#define STAGE_XDP_OUT 2
+#define STAGE_XDP_ENTRY 1
+#define STAGE_XDP_EXIT 2
 #define STAGE_REDIRECT 3
 #define STAGE_XSK_RX 4
 #define STAGE_XSK_TX 5

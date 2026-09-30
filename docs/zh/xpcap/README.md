@@ -17,7 +17,7 @@ install -m 755 xpcap-linux-x86_64 "$HOME/.local/bin/xpcap"
 ```sh
 xpcap -i eth0
 xpcap -i any -c 20 tcp and port 443
-xpcap -i eth0 -S xdp-in,xdp-out,redirect -q 3 -T 10
+xpcap -i eth0 -S xdp-entry,xdp-exit,redirect -q 3 -T 10
 xpcap -i eth0 -S pcap -ev -c 10 tcp
 xpcap -i eth0 -w trace.pcapng udp and port 9000
 ```
@@ -28,8 +28,8 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 
 | 选项 | 用途 |
 | --- | --- |
-| `-S LIST` | 选择阶段，逗号分隔；支持 `xsk`、`pcap`、`xdp-in`、`xdp-out`、`redirect`，以及 `xsk-in/out`、`pcap-in/out` |
-| `-Q in\|out\|inout` | 收发方向，默认双向；`xdp-out` 表示程序出口，不代表网口发包 |
+| `-S LIST` | 选择阶段，逗号分隔；支持 `xsk`、`pcap`、`xdp-entry`、`xdp-exit`、`redirect`，以及 `xsk-in/out`、`pcap-in/out` |
+| `-Q in\|out\|inout` | 收发方向，默认双向；`-Q out` 不包含 XDP 入口、出口与 redirect 阶段 |
 | `-q QUEUE` | XDP/XSK 队列过滤；PCAP 不提供队列号 |
 | `-c EVENTS` / `-T SECONDS` | 全局抓包数量 / 抓包时长上限 |
 | `-s BYTES` | 每包保存字节数，默认 2048，最大 9216 |
@@ -38,7 +38,7 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 | `-v` | 显示 IP 头细节，如 TTL、ID、分片标志和校验和字段 |
 | `-e` | 显示链路头；Ethernet 包可看 MAC/VLAN，`any` 的 PCAP 包显示 SLL 可用字段 |
 
-终端的 `PCAP`、`XSK`、`IN/OUT` 和队列分列显示，协议摘要包含 TCP flags、seq/ack、窗口与选项。`-v/-e` 只影响终端文本，不改变保存的报文；`-e` 在 `-i any` 下无法凭 SLL 头还原完整的源/目的 MAC。
+终端的 `PCAP`、`XSK`、`IN/OUT` 和队列分列显示；XDP 行显示 `XDP-ENTRY` 或 `XDP-EXIT`，不再附加 `IN`。`xdp-exit` 表示程序返回点，不是网卡发包。协议摘要包含 TCP flags、seq/ack、窗口与选项。`-v/-e` 只影响终端文本，不改变保存的报文；`-e` 在 `-i any` 下无法凭 SLL 头还原完整的源/目的 MAC。
 
 ## 过滤表达式
 

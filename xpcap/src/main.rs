@@ -73,7 +73,7 @@ struct Args {
         short = 'S',
         long,
         value_name = "LIST",
-        help = "Stages: xsk,pcap,xdp-in,xdp-out,redirect (comma-separated)"
+        help = "Stages: xsk,pcap,xdp-entry,xdp-exit,redirect (comma-separated)"
     )]
     stage: Option<String>,
     #[arg(short = 'Q', value_enum, default_value_t = Direction::Inout, value_name = "DIRECTION", help = "Capture direction")]
@@ -125,8 +125,8 @@ fn selection(args: &Args) -> Result<Selection> {
                 }
                 "pcap-in" => selected.pcap_in = true,
                 "pcap-out" => selected.pcap_out = true,
-                "xdp-in" => selected.mask |= Stage::XdpIn.bit(),
-                "xdp-out" => selected.mask |= Stage::XdpOut.bit(),
+                "xdp-entry" => selected.mask |= Stage::XdpEntry.bit(),
+                "xdp-exit" => selected.mask |= Stage::XdpExit.bit(),
                 "redirect" => selected.mask |= Stage::Redirect.bit(),
                 _ => bail!("unknown stage: {name}"),
             }
@@ -609,8 +609,8 @@ fn format_capture_line(
         Stage::XskTx => ("XSK", "OUT"),
         Stage::Pcap if event.action == 1 => ("PCAP", "OUT"),
         Stage::Pcap => ("PCAP", "IN"),
-        Stage::XdpIn => ("XDP-IN", "IN"),
-        Stage::XdpOut => ("XDP-OUT", "IN"),
+        Stage::XdpEntry => ("XDP-ENTRY", ""),
+        Stage::XdpExit => ("XDP-EXIT", ""),
         Stage::Redirect => ("REDIRECT", "IN"),
     };
     let suffix = if extra.is_empty() {
@@ -624,7 +624,7 @@ fn format_capture_line(
         String::new()
     };
     format!(
-        "{} {}{:<4} {:<8} {:<3} {}{}{}{}",
+        "{} {}{:<4} {:<9} {:<3} {}{}{}{}",
         local_time(wall),
         interface,
         queue,
@@ -954,7 +954,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    let xdp_mask = Stage::XdpIn.bit() | Stage::XdpOut.bit();
+    let xdp_mask = Stage::XdpEntry.bit() | Stage::XdpExit.bit();
     if bpf_available && config.stage_mask & xdp_mask != 0 {
         for (&ifindex, name) in &state.borrow().names {
             match xdp_program_id(ifindex) {
@@ -980,10 +980,10 @@ fn main() -> Result<()> {
                                 let mut per_prog = config;
                                 per_prog.prog_id = id;
                                 let mut stages = Vec::new();
-                                if config.stage_mask & Stage::XdpIn.bit() != 0 {
+                                if config.stage_mask & Stage::XdpEntry.bit() != 0 {
                                     stages.push("xdp_entry");
                                 }
-                                if config.stage_mask & Stage::XdpOut.bit() != 0 {
+                                if config.stage_mask & Stage::XdpExit.bit() != 0 {
                                     stages.push("xdp_exit");
                                 }
                                 match load_group(
@@ -994,7 +994,7 @@ fn main() -> Result<()> {
                                     loaded.first().map(|item| &item._object),
                                 ) {
                                     Ok(item) => {
-                                        for stage in [Stage::XdpIn, Stage::XdpOut] {
+                                        for stage in [Stage::XdpEntry, Stage::XdpExit] {
                                             if config.stage_mask & stage.bit() != 0 {
                                                 coverage.attached(stage, format!("{name}#{id}"));
                                             }
@@ -1002,7 +1002,7 @@ fn main() -> Result<()> {
                                         loaded.push(item);
                                     }
                                     Err(error) => {
-                                        for stage in [Stage::XdpIn, Stage::XdpOut] {
+                                        for stage in [Stage::XdpEntry, Stage::XdpExit] {
                                             if config.stage_mask & stage.bit() != 0 {
                                                 coverage.missing(stage, format!("{name}#{id}"));
                                             }
@@ -1013,7 +1013,7 @@ fn main() -> Result<()> {
                                 }
                             }
                             Err(error) => {
-                                for stage in [Stage::XdpIn, Stage::XdpOut] {
+                                for stage in [Stage::XdpEntry, Stage::XdpExit] {
                                     if config.stage_mask & stage.bit() != 0 {
                                         coverage.missing(stage, format!("{name}#{id}"));
                                     }
@@ -1024,7 +1024,7 @@ fn main() -> Result<()> {
                     }
                 }
                 Ok(None) => {
-                    for stage in [Stage::XdpIn, Stage::XdpOut] {
+                    for stage in [Stage::XdpEntry, Stage::XdpExit] {
                         if config.stage_mask & stage.bit() != 0 {
                             coverage.missing(stage, name.clone());
                         }
@@ -1032,7 +1032,7 @@ fn main() -> Result<()> {
                     unavailable.push(format!("{name}: no XDP program attached"));
                 }
                 Err(error) => {
-                    for stage in [Stage::XdpIn, Stage::XdpOut] {
+                    for stage in [Stage::XdpEntry, Stage::XdpExit] {
                         if config.stage_mask & stage.bit() != 0 {
                             coverage.missing(stage, name.clone());
                         }
@@ -1228,6 +1228,8 @@ mod tests {
         for args in [
             vec!["xpcap", "-i", "lo", "--perf-pages", "3"],
             vec!["xpcap", "-i", "lo", "--stage", "bad"],
+            vec!["xpcap", "-i", "lo", "--stage", "xdp-in"],
+            vec!["xpcap", "-i", "lo", "--stage", "xdp-out"],
         ] {
             let args = Args::try_parse_from(args).unwrap();
             assert!(build_config(&args).is_err());
@@ -1256,6 +1258,7 @@ mod tests {
             "-B, --perf-pages",
             "-v",
             "-e",
+            "xdp-entry,xdp-exit",
             "xpcap -i any tcp and port 443",
             "xpcap -i eth0 'host 192.0.2.1 and (tcp or udp)'",
             "xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'",
@@ -1350,13 +1353,29 @@ mod tests {
     }
 
     #[test]
+    fn xdp_stages_select_entry_and_exit_without_egress_direction() {
+        let args =
+            Args::try_parse_from(["xpcap", "-i", "lo", "-S", "xdp-entry,xdp-exit", "-Q", "in"])
+                .unwrap();
+        let (config, _, _) = build_config(&args).unwrap();
+        assert_eq!(
+            config.stage_mask,
+            Stage::XdpEntry.bit() | Stage::XdpExit.bit()
+        );
+
+        let out =
+            Args::try_parse_from(["xpcap", "-i", "lo", "-S", "xdp-exit", "-Q", "out"]).unwrap();
+        assert!(build_config(&out).is_err());
+    }
+
+    #[test]
     fn capture_lines_show_interface_only_for_multiple_interfaces() {
         let mut names = HashMap::from([(1, "eth0".to_string())]);
         let packet = [0u8; 14];
         let mut event = Event::packet(1, 0, false, packet.len() as u32, &packet);
         let single = format_capture_line(&names, false, PrintOptions::default(), &event, 0, "");
         assert!(!single.contains("eth0"));
-        assert!(single.contains("q-   PCAP     IN"));
+        assert!(single.contains("q-   PCAP      IN"));
         assert!(single.contains("length 14"));
         let truncated = Event::packet(1, 0, false, 100, &packet);
         let line = format_capture_line(&names, false, PrintOptions::default(), &truncated, 0, "");
@@ -1365,13 +1384,25 @@ mod tests {
 
         names.insert(2, "eth1".to_string());
         let multiple = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
-        assert!(multiple.contains("eth0         q-   PCAP     IN"));
+        assert!(multiple.contains("eth0         q-   PCAP      IN"));
 
         event.stage = Stage::XskRx;
         event.queue = 3;
         event.ifindex = 2;
         let xsk = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
-        assert!(xsk.contains("eth1         q3   XSK      IN"));
+        assert!(xsk.contains("eth1         q3   XSK       IN"));
+
+        event.stage = Stage::XdpEntry;
+        let entry = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
+        assert!(entry.contains("q3   XDP-ENTRY     "));
+        assert!(!entry.contains("XDP-ENTRY IN"));
+
+        event.stage = Stage::XdpExit;
+        event.action = 3;
+        let exit = format_capture_line(&names, true, PrintOptions::default(), &event, 0, "");
+        assert!(exit.contains("q3   XDP-EXIT      "));
+        assert!(exit.contains("action=TX"));
+        assert!(!exit.contains("XDP-EXIT IN"));
     }
 
     #[test]

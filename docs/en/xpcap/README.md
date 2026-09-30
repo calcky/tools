@@ -17,7 +17,7 @@ install -m 755 xpcap-linux-x86_64 "$HOME/.local/bin/xpcap"
 ```sh
 xpcap -i eth0
 xpcap -i any -c 20 tcp and port 443
-xpcap -i eth0 -S xdp-in,xdp-out,redirect -q 3 -T 10
+xpcap -i eth0 -S xdp-entry,xdp-exit,redirect -q 3 -T 10
 xpcap -i eth0 -S pcap -ev -c 10 tcp
 xpcap -i eth0 -w trace.pcapng udp and port 9000
 ```
@@ -28,8 +28,8 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 
 | Option | Purpose |
 | --- | --- |
-| `-S LIST` | Comma-separated stages: `xsk`, `pcap`, `xdp-in`, `xdp-out`, `redirect`, or `xsk-in/out` and `pcap-in/out` |
-| `-Q in\|out\|inout` | Capture direction; default is both. `xdp-out` means program exit, not interface transmit |
+| `-S LIST` | Comma-separated stages: `xsk`, `pcap`, `xdp-entry`, `xdp-exit`, `redirect`, or `xsk-in/out` and `pcap-in/out` |
+| `-Q in\|out\|inout` | Capture direction; default is both. `-Q out` excludes XDP entry, exit and redirect stages |
 | `-q QUEUE` | XDP/XSK queue filter; PCAP cannot report a queue |
 | `-c EVENTS` / `-T SECONDS` | Global event count / duration limit |
 | `-s BYTES` | Captured bytes per packet; default 2048, maximum 9216 |
@@ -38,7 +38,7 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 | `-v` | Show IP header details such as TTL, ID, fragmentation flags and checksum field |
 | `-e` | Show link header; MAC/VLAN on Ethernet, available SLL fields for PCAP on `any` |
 
-Terminal output separates source (`PCAP`/`XSK`), direction (`IN`/`OUT`) and queue; the protocol summary includes TCP flags, seq/ack, window and options. `-v/-e` affect terminal text only, not saved packet bytes. SLL cannot reconstruct a full source/destination MAC pair for `-i any`.
+Terminal output separates source (`PCAP`/`XSK`), direction (`IN`/`OUT`) and queue. XDP rows show `XDP-ENTRY` or `XDP-EXIT` without an additional `IN`; `xdp-exit` means program return, not NIC transmit. The protocol summary includes TCP flags, seq/ack, window and options. `-v/-e` affect terminal text only, not saved packet bytes. SLL cannot reconstruct a full source/destination MAC pair for `-i any`.
 
 ## Filter Expressions
 

@@ -170,6 +170,20 @@ mod tests {
     }
 
     #[test]
+    fn xdp_comment_names_program_stage_without_packet_direction() {
+        let mut bytes = Vec::new();
+        let mut writer = PcapngWriter::new(&mut bytes).unwrap();
+        writer.add_interface(2, "eth0").unwrap();
+        let mut event = Event::packet(2, 1, false, 14, &[0u8; 14]);
+        event.stage = Stage::XdpExit;
+        event.action = 3;
+        writer.write_event(&event, 1, "").unwrap();
+        assert!(bytes.windows(14).any(|part| part == b"stage=xdp-exit"));
+        assert!(bytes.windows(9).any(|part| part == b"action=TX"));
+        assert!(!bytes.windows(10).any(|part| part == b"direction="));
+    }
+
+    #[test]
     fn any_packet_uses_cooked_link_type_and_xsk_keeps_ethernet() {
         let mut bytes = Vec::new();
         let mut writer = PcapngWriter::new(&mut bytes).unwrap();
@@ -228,7 +242,7 @@ mod tests {
                         to_ifindex: 0,
                         packet_len: packet.len() as u32,
                         result: 0,
-                        stage: Stage::XdpIn,
+                        stage: Stage::XdpEntry,
                         action: 0,
                         flags: 0,
                         packet: &packet,
