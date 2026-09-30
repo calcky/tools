@@ -195,6 +195,7 @@ struct Item {
 
 #[derive(Clone, Copy)]
 enum Sort {
+    Queue,
     Activity,
     Rx,
     Tx,
@@ -204,14 +205,16 @@ enum Sort {
 impl Sort {
     fn next(self) -> Self {
         match self {
+            Self::Queue => Self::Activity,
             Self::Activity => Self::Rx,
             Self::Rx => Self::Tx,
             Self::Tx => Self::Errors,
-            Self::Errors => Self::Activity,
+            Self::Errors => Self::Queue,
         }
     }
     fn label(self) -> &'static str {
         match self {
+            Self::Queue => "queue",
             Self::Activity => "activity",
             Self::Rx => "RX",
             Self::Tx => "TX",
@@ -220,6 +223,7 @@ impl Sort {
     }
     fn value(self, item: &Item) -> u64 {
         match self {
+            Self::Queue => 0,
             Self::Activity => item.delta.rx_packets + item.delta.tx_packets,
             Self::Rx => item.delta.rx_packets,
             Self::Tx => item.delta.tx_packets,
@@ -250,7 +254,7 @@ impl Screen {
             items: Vec::new(),
             selected: 0,
             scroll: 0,
-            sort: Sort::Activity,
+            sort: Sort::Queue,
             filter: args.interface,
             interval: args.delay,
             started: Instant::now(),
@@ -338,13 +342,7 @@ impl Screen {
                 ready,
             });
         }
-        items.sort_by(|a, b| {
-            self.sort
-                .value(b)
-                .cmp(&self.sort.value(a))
-                .then_with(|| a.socket.iface.cmp(&b.socket.iface))
-                .then_with(|| a.socket.queue.cmp(&b.socket.queue))
-        });
+        sort_items(&mut items, self.sort);
         self.items = items;
         self.previous = previous;
         self.sampled = Some(now);
@@ -366,6 +364,17 @@ impl Screen {
             self.selected = self.selected.saturating_sub(1);
         }
     }
+}
+
+fn sort_items(items: &mut [Item], sort: Sort) {
+    items.sort_by(|a, b| {
+        a.socket
+            .iface
+            .cmp(&b.socket.iface)
+            .then_with(|| sort.value(b).cmp(&sort.value(a)))
+            .then_with(|| a.socket.queue.cmp(&b.socket.queue))
+            .then_with(|| a.socket.inode.cmp(&b.socket.inode))
+    });
 }
 
 struct TerminalGuard;
@@ -390,7 +399,11 @@ impl Drop for TerminalGuard {
 
 fn rate(value: u64, elapsed: f64) -> String {
     let rate = value as f64 / elapsed.max(0.001);
-    if rate >= 1_000_000.0 {
+    if value > 0 && rate < 0.01 {
+        "<0.01".into()
+    } else if rate < 1.0 && value > 0 {
+        format!("{rate:.2}")
+    } else if rate >= 1_000_000.0 {
         format!("{:.1}M", rate / 1_000_000.0)
     } else if rate >= 10_000.0 {
         format!("{:.1}k", rate / 1000.0)
@@ -411,15 +424,16 @@ fn text_sample(screen: &Screen, index: u32, count: u32) -> String {
         screen.items.len()
     );
     output.push_str(&format!(
-        "{:<14} {:>2} {:<4} {:>7} {:>8} {:>7} {:>8} {:>7} {:>12} {:>10}  {}\n",
+        "{:<14} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}\n",
         "IFACE",
         "Q",
         "MODE",
         "RXpps",
-        "RXMb/s",
         "TXpps",
+        "RXMb/s",
         "TXMb/s",
-        "ERR/s",
+        "RXERR/s",
+        "TXERR/s",
         "FILL_EMPTY/s",
         "TX_EMPTY/s",
         "PROCESS"
@@ -471,15 +485,16 @@ fn text_sample(screen: &Screen, index: u32, count: u32) -> String {
         };
         let status = if item.ambiguous { " [ambiguous]" } else { "" };
         output.push_str(&format!(
-            "{:<14} {:>2} {:<4} {:>7} {:>8} {:>7} {:>8} {:>7} {:>12} {:>10}  {}{}\n",
+            "{:<14} {:>2} {:<4} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10}  {}{}\n",
             item.socket.iface,
             item.socket.queue,
             if item.socket.zero_copy { "zc" } else { "copy" },
             rx_pps,
-            rx_bw,
             tx_pps,
+            rx_bw,
             tx_bw,
-            event_rate(item.errors.total()),
+            event_rate(item.errors.rx_total()),
+            event_rate(item.errors.tx_total()),
             event_rate(item.errors.fill_empty),
             event_rate(item.errors.tx_empty),
             item.socket.owner,
@@ -548,14 +563,19 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         .filter(|item| !item.ambiguous)
         .map(|item| item.delta.tx_packets)
         .sum();
-    let partial_total = screen.items.iter().any(|item| item.ambiguous);
+    let partial_rx = screen.items.iter().any(|item| item.ambiguous);
+    let partial_tx = partial_rx
+        || screen
+            .items
+            .iter()
+            .any(|item| item.ready && item.delta.tx_unmeasured_packets > 0);
     let elapsed = screen.sample_interval.max(0.001);
     let header = format!(
         "{} XSK  |  RX {}{} pps  TX {}{} pps  |  up {:.0}s  |  sort {}{}",
         screen.items.len(),
-        if partial_total { ">=" } else { "" },
+        if partial_rx { ">=" } else { "" },
         rate(total_rx, elapsed),
-        if partial_total { ">=" } else { "" },
+        if partial_tx { ">=" } else { "" },
         rate(total_tx, elapsed),
         screen.started.elapsed().as_secs_f64(),
         screen.sort.label(),
@@ -568,13 +588,26 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
         Paragraph::new(header).block(Block::default().title(" xsktop ").borders(Borders::ALL)),
         panes[0],
     );
-    let header = if wide {
-        Row::new([
-            "IFACE", "Q", "MODE", "RX pps", "RX Mb/s", "TX pps", "TX Mb/s", "ERR/s", "PROCESS",
-        ])
-    } else {
-        Row::new(["IFACE", "Q", "MODE", "RX pps", "TX pps", "ERR/s", "PROCESS"])
-    }
+    let header = Row::new([
+        "IFACE",
+        "Q",
+        "MODE",
+        "RX pps",
+        "TX pps",
+        "RX Mb/s",
+        "TX Mb/s",
+        if area.width >= 100 {
+            "RX err/s"
+        } else {
+            "RXe/s"
+        },
+        if area.width >= 100 {
+            "TX err/s"
+        } else {
+            "TXe/s"
+        },
+        "PROCESS",
+    ])
     .style(
         Style::default()
             .add_modifier(Modifier::BOLD)
@@ -621,25 +654,32 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
                 )
             };
             let mode = if item.socket.zero_copy { "zc" } else { "copy" };
+            let first_in_group =
+                idx == screen.scroll || screen.items[idx - 1].socket.iface != item.socket.iface;
             let mut cells = vec![
-                item.socket.iface.clone(),
+                if first_in_group {
+                    item.socket.iface.clone()
+                } else {
+                    String::new()
+                },
                 item.socket.queue.to_string(),
                 mode.into(),
                 show(item.delta.rx_packets),
             ];
-            if wide {
-                cells.push(rx_bw);
-            }
             cells.push(if !hidden && item.delta.tx_unmeasured_packets > 0 {
                 format!(">={}", show(item.delta.tx_packets))
             } else {
                 show(item.delta.tx_packets)
             });
-            if wide {
-                cells.push(tx_bw);
-            }
+            cells.push(rx_bw);
+            cells.push(tx_bw);
             cells.push(if item.ready {
-                rate(item.errors.total(), item.elapsed)
+                rate(item.errors.rx_total(), item.elapsed)
+            } else {
+                "-".into()
+            });
+            cells.push(if item.ready {
+                rate(item.errors.tx_total(), item.elapsed)
             } else {
                 "-".into()
             });
@@ -649,34 +689,72 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
                     .fg(Color::Black)
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
-            } else if item.errors.total() > 0 || item.ambiguous {
+            } else if item.ambiguous {
                 Style::default().fg(Color::Yellow)
             } else {
                 Style::default()
             };
-            Row::new(cells.into_iter().map(Cell::from)).style(style)
+            let cells = cells.into_iter().enumerate().map(|(column, value)| {
+                let cell = Cell::from(value);
+                if column == 0 && first_in_group && idx != screen.selected {
+                    cell.style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else if idx != screen.selected
+                    && ((column == 7 && item.errors.rx_total() > 0)
+                        || (column == 8 && item.errors.tx_total() > 0))
+                {
+                    cell.style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    cell
+                }
+            });
+            Row::new(cells).style(style)
         });
-    let widths = if wide {
+    let widths = if area.width >= 100 {
         vec![
             Constraint::Length(15),
             Constraint::Length(4),
             Constraint::Length(5),
             Constraint::Length(9),
-            Constraint::Length(10),
             Constraint::Length(9),
             Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
             Constraint::Length(8),
             Constraint::Min(10),
         ]
+    } else if area.width >= 80 {
+        vec![
+            Constraint::Length(11),
+            Constraint::Length(3),
+            Constraint::Length(4),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Min(9),
+        ]
     } else {
         vec![
-            Constraint::Length(14),
+            Constraint::Length(11),
+            Constraint::Length(2),
             Constraint::Length(4),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
             Constraint::Length(5),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Length(8),
-            Constraint::Min(9),
+            Constraint::Length(5),
+            Constraint::Min(10),
         ]
     };
     let table = Table::new(rows, widths)
@@ -722,18 +800,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, screen: &mut Screen) {
             }
         };
         let err_rate = format!(
-            "ERR/s: drop {} | RX invalid {} full {} | TX invalid {}",
+            "ERR/s: RX drop {} invalid {} full {} | TX invalid {}",
             show_error_rate(item.errors.rx_dropped),
             show_error_rate(item.errors.rx_invalid),
             show_error_rate(item.errors.rx_full),
             show_error_rate(item.errors.tx_invalid)
         );
         let event_rate = format!(
-            "Events/s: fill empty {} | TX empty {}",
+            "Events/s: UMEM fill empty {} | TX empty {}",
             show_error_rate(item.errors.fill_empty),
             show_error_rate(item.errors.tx_empty)
         );
-        format!("{} / q{}  {}  inode {}\n{}{}UMEM {} KiB; chunk {} B\nRing capacity RX/TX/FILL/CQ: {}/{}/{}/{}\n{}\nErrors total: drop {} | RX invalid {} full {} | TX invalid {}\n{}\nEvents total: fill empty {} | TX empty {}\n{}",
+        format!("{} / q{}  {}  inode {}\n{}{}UMEM {} KiB; chunk {} B\nRing capacity RX/TX/FILL/CQ: {}/{}/{}/{}\n{}\nErrors total: RX drop {} invalid {} full {} | TX invalid {}\n{}\nEvents total: UMEM fill empty {} | TX empty {}\n{}",
             s.iface, s.queue, s.owner, s.inode, bw, if wide { " | " } else { "\n" }, s.umem_bytes / 1024, s.chunk_bytes,
             s.rings[0], s.rings[1], s.rings[2], s.rings[3], err_rate, s.errors.rx_dropped,
             s.errors.rx_invalid, s.errors.rx_full, s.errors.tx_invalid,
@@ -873,6 +951,47 @@ mod tests {
     }
 
     #[test]
+    fn nonzero_rates_do_not_round_to_zero() {
+        assert_eq!(rate(0, 5.0), "0");
+        assert_eq!(rate(1, 5.0), "0.20");
+        assert_eq!(rate(1, 1_000.0), "<0.01");
+        assert_eq!(rate(5, 1.0), "5");
+    }
+
+    #[test]
+    fn header_marks_unmeasured_tx_as_a_lower_bound() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let mut screen = Screen::new(Args {
+            interface: None,
+            delay: 1.0,
+            count: None,
+        });
+        screen.sample_interval = 1.0;
+        screen.items.push(Item {
+            socket: Socket {
+                iface: "eth0".into(),
+                ..Default::default()
+            },
+            delta: Counter {
+                rx_packets: 7,
+                tx_packets: 10,
+                tx_unmeasured_packets: 3,
+                ..Default::default()
+            },
+            errors: Errors::default(),
+            elapsed: 1.0,
+            ambiguous: false,
+            ready: true,
+        });
+        terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let header = (0..120)
+            .map(|column| buffer[(column, 1)].symbol())
+            .collect::<String>();
+        assert!(header.contains("RX 7 pps  TX >=10 pps"));
+    }
+
+    #[test]
     fn text_sample_keeps_events_separate_from_errors() {
         let mut screen = Screen::new(Args {
             interface: None,
@@ -898,6 +1017,7 @@ mod tests {
             },
             errors: Errors {
                 rx_dropped: 4,
+                tx_invalid: 6,
                 fill_empty: 20,
                 tx_empty: 8,
                 ..Default::default()
@@ -908,7 +1028,8 @@ mod tests {
         });
         let output = text_sample(&screen, 1, 1);
         assert!(output.contains("sample 1/1  interval 2.000s"));
-        assert!(output.contains("ERR/s"));
+        assert!(output.contains("RXERR/s"));
+        assert!(output.contains("TXERR/s"));
         assert!(output.contains("FILL_EMPTY/s"));
         assert!(output.contains("TX_EMPTY/s"));
         assert!(output.contains("eth0"));
@@ -920,12 +1041,12 @@ mod tests {
             .unwrap()
             .split_whitespace()
             .collect::<Vec<_>>();
-        assert_eq!(&fields[7..10], &["2", "10", "4"]);
+        assert_eq!(&fields[7..11], &["2", "3", "10", "4"]);
     }
 
     #[test]
     fn renders_empty_and_populated_screens_at_supported_widths() {
-        for (width, height) in [(74, 20), (80, 24), (120, 40)] {
+        for (width, height) in [(74, 20), (80, 24), (100, 30), (120, 40)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             let mut screen = Screen::new(Args {
                 interface: None,
@@ -951,6 +1072,120 @@ mod tests {
                 ready: true,
             });
             terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
+        }
+    }
+
+    #[test]
+    fn groups_interfaces_and_sorts_queues_by_default() {
+        let mut screen = Screen::new(Args {
+            interface: None,
+            delay: 1.0,
+            count: None,
+        });
+        for (iface, queue, rx_packets) in [("eth1", 0, 1000), ("eth0", 1, 500), ("eth0", 0, 100)] {
+            screen.items.push(Item {
+                socket: Socket {
+                    iface: iface.into(),
+                    queue,
+                    ..Default::default()
+                },
+                delta: Counter {
+                    rx_packets,
+                    ..Default::default()
+                },
+                errors: Errors::default(),
+                elapsed: 1.0,
+                ambiguous: false,
+                ready: true,
+            });
+        }
+        sort_items(&mut screen.items, screen.sort);
+        let keys = screen
+            .items
+            .iter()
+            .map(|item| (item.socket.iface.as_str(), item.socket.queue))
+            .collect::<Vec<_>>();
+        assert_eq!(keys, [("eth0", 0), ("eth0", 1), ("eth1", 0)]);
+
+        sort_items(&mut screen.items, Sort::Activity);
+        let keys = screen
+            .items
+            .iter()
+            .map(|item| (item.socket.iface.as_str(), item.socket.queue))
+            .collect::<Vec<_>>();
+        assert_eq!(keys, [("eth0", 1), ("eth0", 0), ("eth1", 0)]);
+    }
+
+    #[test]
+    fn compact_table_shows_bandwidth_and_groups_interface_rows() {
+        for width in [74, 80, 100, 120] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            let mut screen = Screen::new(Args {
+                interface: None,
+                delay: 1.0,
+                count: None,
+            });
+            for queue in [0, 1] {
+                screen.items.push(Item {
+                    socket: Socket {
+                        iface: "eth0".into(),
+                        queue,
+                        ..Default::default()
+                    },
+                    delta: Counter {
+                        rx_bytes: 2000,
+                        tx_bytes: 1000,
+                        ..Default::default()
+                    },
+                    errors: if queue == 0 {
+                        Errors {
+                            rx_dropped: 1,
+                            rx_invalid: 2,
+                            rx_full: 3,
+                            tx_invalid: 8,
+                            fill_empty: 100,
+                            tx_empty: 200,
+                        }
+                    } else {
+                        Errors::default()
+                    },
+                    elapsed: 2.0,
+                    ambiguous: false,
+                    ready: true,
+                });
+            }
+            terminal.draw(|frame| draw(frame, &mut screen)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let line = |row| {
+                (0..width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+            };
+            let header = line(4);
+            assert!(header.contains("RX pps"), "width {width}");
+            assert!(header.contains("TX pps"), "width {width}");
+            assert!(header.contains("RX Mb/s"), "width {width}");
+            assert!(
+                header.find("TX pps") < header.find("RX Mb/s"),
+                "width {width}"
+            );
+            assert!(line(4).contains("TX Mb/s"), "width {width}");
+            assert!(header.contains(if width >= 100 { "RX err/s" } else { "RXe/s" }));
+            assert!(header.contains(if width >= 100 { "TX err/s" } else { "TXe/s" }));
+            assert!(line(5).contains("eth0"), "width {width}");
+            assert!(line(5).contains("0.008"), "width {width}");
+            assert!(line(5).contains("0.004"), "width {width}");
+            let data_row = line(5).chars().skip(1).collect::<String>();
+            assert_eq!(
+                &data_row.split_whitespace().collect::<Vec<_>>()[..9],
+                &["eth0", "0", "copy", "0", "0", "0.008", "0.004", "3", "4"],
+                "width {width}"
+            );
+            assert_eq!(
+                line(6).chars().skip(1).take(11).collect::<String>(),
+                "           "
+            );
+            assert!(line(6).contains("0.008"), "width {width}");
         }
     }
 
@@ -989,7 +1224,11 @@ mod tests {
                 .collect::<String>()
         };
         assert!(line(1).contains("RX >=0 pps  TX >=0 pps"));
-        assert!(line(5).contains("-         -          -         -          7"));
+        let data_row = line(5).chars().skip(1).collect::<String>();
+        assert_eq!(
+            data_row.split_whitespace().take(8).collect::<Vec<_>>(),
+            ["eth0", "0", "copy", "-", "-", "-", "-", "7"]
+        );
     }
 
     #[test]
@@ -1029,15 +1268,15 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(lines.iter().any(|line| line.contains("ERR/s: drop 2")));
+        assert!(lines.iter().any(|line| line.contains("ERR/s: RX drop 2")));
         assert!(lines
             .iter()
-            .any(|line| line.contains("Errors total: drop 100")));
+            .any(|line| line.contains("Errors total: RX drop 100")));
         assert!(lines
             .iter()
-            .any(|line| line.contains("Events/s: fill empty 10")));
+            .any(|line| line.contains("Events/s: UMEM fill empty 10")));
         assert!(lines
             .iter()
-            .any(|line| line.contains("Events total: fill empty 500")));
+            .any(|line| line.contains("Events total: UMEM fill empty 500")));
     }
 }

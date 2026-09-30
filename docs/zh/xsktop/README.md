@@ -35,7 +35,7 @@ sudo xsktop -c 5 -d 1 > log   # 采样 5 次，输出纯文本
 
 - 需要 Linux 6.6+、`CONFIG_XDP_SOCKETS_DIAG`、内核 BTF 和 fentry/fexit BPF 支持；通常需要 root 或相应能力。
 - RX 表示进入 XSK，TX 表示内核取走描述符，不等于应用已消费或报文已上网线。ring 显示的是容量，不是实时占用。
-- `FILL empty`、`TX empty` 是事件，不计入 `ERR/s`。同一网口/队列有多个 XSK 时，速率无法准确归属，会显示为 `-`。
+- `UMEM fill empty`、`TX empty` 是事件，不计入 RX/TX 错误。共用 UMEM 的 socket 可能共享 fill-ring 事件。同一网口/队列有多个 XSK 时，速率显示为 `-`；其中一个关闭后的首个采样区间仍可能包含其流量。
 - 已验证 veth 上的 generic/copy 与 native/copy；真实网卡 zero-copy 和多缓冲报文尚未验证。
 
 [完整手册](https://github.com/calcky/tools/blob/master/xsktop/README.md)

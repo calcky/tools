@@ -17,8 +17,18 @@ pub struct Errors {
 }
 
 impl Errors {
+    pub fn rx_total(self) -> u64 {
+        self.rx_dropped
+            .saturating_add(self.rx_invalid)
+            .saturating_add(self.rx_full)
+    }
+
+    pub fn tx_total(self) -> u64 {
+        self.tx_invalid
+    }
+
     pub fn total(self) -> u64 {
-        self.rx_dropped + self.rx_invalid + self.rx_full + self.tx_invalid
+        self.rx_total().saturating_add(self.tx_total())
     }
 
     pub fn delta(self, old: Self) -> Self {

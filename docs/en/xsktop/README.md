@@ -35,7 +35,7 @@ Use arrow keys or `j/k` to select a socket, `s` to sort and `q` to quit.
 
 - Requires Linux 6.6+, `CONFIG_XDP_SOCKETS_DIAG`, kernel BTF and fentry/fexit BPF support; root or equivalent capabilities are normally needed.
 - RX is delivery into an XSK, while TX is dequeue by the kernel. Neither means application consumption or on-wire transmission. Ring figures are capacities, not occupancy.
-- `FILL empty` and `TX empty` are events, not `ERR/s` errors. Traffic attribution is hidden when multiple XSKs share an interface and queue.
+- `UMEM fill empty` and `TX empty` are events, not RX/TX errors. Fill-ring events may be shared by sockets using the same UMEM. Traffic attribution is hidden when multiple XSKs share an interface and queue; after one closes, the first interval may still include its traffic.
 - Generic/copy and native/copy were tested on veth; hardware zero-copy and multi-buffer packets remain unvalidated.
 
 [Full manual](https://github.com/calcky/tools/blob/master/xsktop/README.md)

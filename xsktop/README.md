@@ -39,11 +39,18 @@ sudo xsktop -c 5 -d 1 > xsktop.txt  # five measured text samples, no TTY needed
 ```
 
 `j/k` or arrow keys select a socket, `s` cycles the sort key, and `q` quits.
-The table shows RX/TX packets per second, megabits per second, error changes,
-and the process holding the socket. The details pane shows UMEM, ring **capacity**
+Sockets are grouped by interface and sorted by queue by default. Other sort
+keys reorder queues within each interface. The table always shows adjacent
+RX/TX packet rates, adjacent RX/TX megabits per second, separate RX/TX error
+rates, and the process holding the socket. RX errors sum dropped packets,
+invalid descriptors, and RX-ring-full counts; TX errors count invalid TX
+descriptors. The details pane breaks down these error classes and shows UMEM,
+ring **capacity**
 (not occupancy), error and empty-ring event rates, and their cumulative totals.
-`FILL empty` and `TX empty` are events, not errors, so they are excluded from
-`ERR/s`. Process ownership is best-effort when
+`UMEM fill empty` and `TX empty` are events, not errors, so they are excluded
+from the RX/TX error columns. The fill-ring counter belongs to the UMEM pool;
+if sockets share that pool, it is not attributable to one socket. Process
+ownership is best-effort when
 `/proc` is restricted or file descriptors are shared.
 
 With `-c N`, xsktop takes one baseline snapshot and then prints N interval
@@ -56,10 +63,12 @@ RX means successful delivery **into** XSK; TX means dequeued by the kernel or
 accepted by the generic transmit path. Neither is application consumption or
 on-wire delivery. The bandwidth is packet bytes at that point, not Ethernet
 wire rate. `>=` marks a lower bound when a fragmented RX packet or an oversized
-TX batch prevents a complete byte count. If multiple XSKs share one interface
-and queue, traffic is hidden because it cannot be attributed to either socket.
-In that case the header RX/TX rates are lower bounds, while per-socket error
-rates remain visible.
+TX batch prevents a complete byte count or packet count. If multiple XSKs share
+one interface and queue, traffic is hidden because it cannot be attributed to
+either socket. In that case the header RX/TX rates are lower bounds, while
+per-socket error rates remain visible. If one of those sockets closes between
+samples, the first subsequent interval may still include its traffic and be
+attributed to the remaining socket.
 Copy and zero-copy paths are observed separately; the UMEM `zc/copy` flag is
 reported from the kernel.
 
