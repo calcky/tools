@@ -14,6 +14,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [bpftrace](bpftrace/README.md) | Kernel tracing with static executables for three architectures |
 | [nettrace](nettrace/README.md) | Kernel skb paths, packet-drop diagnosis and processing latency |
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
+| [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership |
 
 Start with [Installation](getting-started.md).
 
@@ -29,6 +30,7 @@ Start with [Installation](getting-started.md).
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
+| xsktop | [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
 
 ## Other Scripts
 

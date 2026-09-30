@@ -16,6 +16,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [bpftrace](bpftrace/README.md) | Static Linux tracing executables for three architectures |
 | [nettrace](nettrace/README.md) | Kernel skb path tracing, packet-drop diagnosis and processing latency |
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
+| [xsktop](xsktop/README.md) | Live AF_XDP socket rates, errors and process ownership |
 
 The repository also includes `irq-affinity.sh` for configuring IRQ/RPS.
 The affinity script changes IRQ/RPS configuration.

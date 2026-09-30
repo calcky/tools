@@ -7,12 +7,16 @@ CTTOP_TARGET_DIR ?= cttop/target
 NETLENS_TARGET_DIR ?= netlens/target
 XPCAP_TARGET_DIR ?= xpcap/target
 XPCAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+XSKTOP_TARGET_DIR ?= xsktop/target
+XSKTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
 .PHONY: all irqtop netping flowgen cttop netlens xpcap check check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap install install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap
 
-all: irqtop netping flowgen cttop netlens xpcap
+.PHONY: xsktop check-xsktop install-xsktop
+
+all: irqtop netping flowgen cttop netlens xpcap xsktop
 
 irqtop:
 	$(CARGO) build --manifest-path irqtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(TARGET_DIR))"
@@ -39,7 +43,11 @@ xpcap:
 	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) build --manifest-path xpcap/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(XPCAP_TARGET_DIR))"
 	install -D -m 755 "$(XPCAP_TARGET_DIR)/release/xpcap" bin/xpcap
 
-check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap
+xsktop:
+	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) build --manifest-path xsktop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(XSKTOP_TARGET_DIR))"
+	install -D -m 755 "$(XSKTOP_TARGET_DIR)/release/xsktop" bin/xsktop
+
+check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop
 
 check-irqtop:
 	$(CARGO) fmt --manifest-path irqtop/Cargo.toml -- --check
@@ -71,7 +79,12 @@ check-xpcap:
 	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) test --manifest-path xpcap/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(XPCAP_TARGET_DIR))"
 	LIBBPF_SYS_LIBRARY_PATH="$(XPCAP_LIB_DIR)" $(CARGO) clippy --manifest-path xpcap/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(XPCAP_TARGET_DIR))" -- -D warnings
 
-install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap
+check-xsktop:
+	$(CARGO) fmt --manifest-path xsktop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) test --manifest-path xsktop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(XSKTOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(XSKTOP_LIB_DIR)" $(CARGO) clippy --manifest-path xsktop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(XSKTOP_TARGET_DIR))" -- -D warnings
+
+install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop
 
 install-irqtop:
 	test -x bin/irqtop
@@ -97,3 +110,7 @@ install-netlens:
 install-xpcap:
 	test -x bin/xpcap
 	install -D -m 755 bin/xpcap "$(DESTDIR)$(BINDIR)/xpcap"
+
+install-xsktop:
+	test -x bin/xsktop
+	install -D -m 755 bin/xsktop "$(DESTDIR)$(BINDIR)/xsktop"
