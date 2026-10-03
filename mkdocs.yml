@@ -94,6 +94,7 @@ exclude_docs: |
   documentation.md
   tests/**
   superpowers/**
+  performance/**
 
 validation:
   nav:

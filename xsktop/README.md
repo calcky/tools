@@ -104,10 +104,14 @@ Press Ctrl+C to stop early. Without `-c`, xsktop opens the live terminal window
 RX means successful delivery **into** XSK; TX means dequeued by the kernel or
 accepted by the generic transmit path. Neither is application consumption or
 on-wire delivery. The bandwidth is packet bytes at that point, not Ethernet
-wire rate. `>=` marks a lower bound when a fragmented RX packet or an oversized
-TX batch prevents a complete byte count or packet count. If multiple XSKs share
-one interface and queue, traffic is hidden because it cannot be attributed to
-either socket. In that case the header RX/TX rates are lower bounds, while
+wire rate. Native RX counts every successful redirect into an XSK; generic
+RX, TX, and socket error/event counters are also unsampled. At low rates,
+short intervals can show zero or fluctuate; increase `-d` to measure over a
+longer interval. `>=` marks a lower bound when a fragmented RX
+packet or an oversized TX batch prevents a complete byte count or packet
+count. If multiple XSKs share one interface and queue, traffic is hidden
+because it cannot be attributed to either socket. In that case the header
+RX/TX rates are lower bounds, while
 per-socket error rates remain visible. If one of those sockets closes between
 samples, the first subsequent interval may still include its traffic and be
 attributed to the remaining socket.
@@ -124,12 +128,31 @@ The program needs root (or the required BPF/tracing capabilities), kernel BTF,
 and access to `/proc` for process names. Probe attachment fails explicitly if
 the running kernel lacks a required function. Without AF_XDP sockets, the table
 is empty. Generic/copy and native/copy were smoke-tested on an isolated veth
-pair on `speed` (Linux 7.0.14) and in a privileged container on a Linux
-6.6.87 WSL2 kernel. Rates matched the `xdp-bench` workload; a 1400-byte ICMP
-payload showed about 42 PPS and 0.484 Mb/s in each direction. The zero-copy
-driver paths and multi-buffer packets still need runtime validation on
-supported hardware. Empty TX ring checks are events, not errors, and are
+pair on `speed` (Linux 7.0.14). Generic/copy rates matched the `xdp-bench` workload.
+Native zero-copy RX was also tested on i40e with Linux 6.6.141; other drivers
+and multi-buffer packets still need runtime validation. Empty TX ring checks
+are events, not errors, and are
 excluded from the `ERR/s` column.
+
+## Measured observation cost
+
+Exact per-packet probes have a measurable cost under saturation. On an isolated
+10 Gb/s X710/i40e link (host A: i5-8500, OpenWrt 24.10.7,
+Linux 6.6.141, `eth10`; host B: i5-13400, Ubuntu 24.04.1,
+Linux 6.8.0-41, `ns1/enp1s0f0np0`), enabling
+`xsktop 0.1.4` reduced 64 B native zero-copy RX from 14.7646 to 5.2181 Mpps.
+At 512 B, generic copy TX fell from 1.8288 to 1.2143 Mpps on a rerun with
+simultaneous per-process CPU samples, while native copy TX fell
+from 1.8342 to 1.2252 Mpps. Each measurement used queue 0, batch 64, a CPU4
+dataplane, a CPU3 monitor, and interleaved OFF/ON runs. The monitor sampled
+every second without sampling packets.
+
+The 18-case X710 matrix in the [Chinese](../docs/zh/xsktop/README.md) and
+[English](../docs/en/xsktop/README.md) documentation shows OFF/ON throughput,
+effective ns/packet and percentage change for RX/TX, `skb`/`drv`,
+copy/zero-copy, and 64/512/1400 B packets. Its ns/packet values are
+reciprocals of throughput, not instruction-level BPF timings; line-rate cases
+cannot reveal spare CPU cost.
 
 ## Build
 

@@ -113,6 +113,48 @@ impl Bpf {
         }
         Ok(total)
     }
+
+    fn reconcile_counters(&self, sockets: &[Socket]) -> Result<()> {
+        let active: HashSet<_> = sockets
+            .iter()
+            .filter(|socket| socket.ifindex != 0)
+            .map(|socket| (socket.ifindex, socket.queue))
+            .collect();
+        let map = self
+            .object
+            .maps()
+            .find(|map| map.name() == "traffic")
+            .context("BPF traffic map missing")?;
+        if map.key_size() != 8 {
+            bail!("unexpected BPF traffic key size");
+        }
+        let stale: HashSet<_> = map
+            .keys()
+            .filter(|key| {
+                let ifindex = u32::from_ne_bytes(key[..4].try_into().unwrap());
+                let queue = u32::from_ne_bytes(key[4..].try_into().unwrap());
+                !active.contains(&(ifindex, queue))
+            })
+            .collect();
+        for key in stale {
+            map.delete(&key)?;
+        }
+
+        let failures = self
+            .object
+            .maps()
+            .find(|map| map.name() == "count_failures")
+            .context("BPF counter failure map missing")?
+            .lookup_percpu(&0_u32.to_ne_bytes(), MapFlags::ANY)?
+            .context("BPF counter failure entry missing")?
+            .into_iter()
+            .map(|value| u64::from_ne_bytes(value.try_into().unwrap()))
+            .sum::<u64>();
+        if failures != 0 {
+            bail!("traffic counters unavailable for {failures} packets; restart xsktop");
+        }
+        Ok(())
+    }
 }
 
 fn diagnose_diag_error(error: anyhow::Error) -> anyhow::Error {
@@ -365,6 +407,7 @@ impl Screen {
         let scan_started = Instant::now();
         let selected_inode = self.items.get(self.selected).map(|item| item.socket.inode);
         let mut sockets = diag::snapshot()?;
+        bpf.reconcile_counters(&sockets)?;
         let mut counts = HashMap::<(u32, u32), usize>::new();
         for socket in &mut sockets {
             socket.iface = diag::iface_name(socket.ifindex);
@@ -1404,6 +1447,7 @@ mod tests {
         screen.xdp_modes.insert(0, XdpMode::Drv);
         let output = text_sample(&screen, 1, 1);
         assert!(output.contains("sample 1/1  interval 2.000s"));
+        assert!(output.contains("RXpps"));
         assert!(output.contains("RXERR/s"));
         assert!(output.contains("TXERR/s"));
         assert!(output.contains("FILL_EMPTY/s"));

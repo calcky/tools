@@ -44,11 +44,18 @@ struct generic_context { struct key key; };
 struct rx_context { struct key key; __u64 bytes; __u32 frags; };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_LRU_PERCPU_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 4096);
     __type(key, struct key);
     __type(value, struct counters);
 } traffic SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} count_failures SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -90,7 +97,13 @@ static __always_inline struct counters *counter(struct key *key) {
     struct counters *value = bpf_map_lookup_elem(&traffic, key);
     if (value) return value;
     bpf_map_update_elem(&traffic, key, &zero, BPF_NOEXIST);
-    return bpf_map_lookup_elem(&traffic, key);
+    value = bpf_map_lookup_elem(&traffic, key);
+    if (!value) {
+        __u32 index = 0;
+        __u64 *failures = bpf_map_lookup_elem(&count_failures, &index);
+        if (failures) (*failures)++;
+    }
+    return value;
 }
 
 static __always_inline bool in_target_netns(struct net_device *dev) {
@@ -106,6 +119,20 @@ static __always_inline struct key socket_key(struct xdp_sock *xs) {
     struct net_device *dev = BPF_CORE_READ(xs, dev);
     struct key key = { .queue = BPF_CORE_READ(xs, queue_id) };
     if (in_target_netns(dev)) key.ifindex = BPF_CORE_READ(dev, ifindex);
+    return key;
+}
+
+/* fexit supplies BTF-typed kernel pointers, so direct CO-RE reads avoid per-packet probe helpers. */
+static __always_inline struct key native_socket_key(struct xdp_sock *xs) {
+    struct net_device *dev = __builtin_preserve_access_index(xs->dev);
+    struct key key = { .queue = __builtin_preserve_access_index(xs->queue_id) };
+    if (!dev) return key;
+    struct net *net = __builtin_preserve_access_index(dev->nd_net.net);
+    if (!net) return key;
+    __u32 zero = 0;
+    __u32 *target = bpf_map_lookup_elem(&target_netns, &zero);
+    if (target && __builtin_preserve_access_index(net->ns.inum) == *target)
+        key.ifindex = __builtin_preserve_access_index(dev->ifindex);
     return key;
 }
 
@@ -148,15 +175,21 @@ static __always_inline void rx_end(int result) {
     sample->key.ifindex = 0;
 }
 
-SEC("fentry/__xsk_map_redirect")
-int BPF_PROG(native_rx_start, struct xdp_sock *xs, struct xdp_buff *xdp) {
-    rx_start(xs, xdp);
-    return 0;
-}
-
 SEC("fexit/__xsk_map_redirect")
 int BPF_PROG(native_rx, struct xdp_sock *xs, struct xdp_buff *xdp, int result) {
-    rx_end(result);
+    if (result || !xs || !xdp) return 0;
+    struct key key = native_socket_key(xs);
+    if (!key.ifindex) return 0;
+    void *data = __builtin_preserve_access_index(xdp->data);
+    void *end = __builtin_preserve_access_index(xdp->data_end);
+    __u64 len = (__u64)end - (__u64)data;
+    if (len > 65535) return 0;
+    struct counters *value = counter(&key);
+    if (!value) return 0;
+    value->rx_packets++;
+    value->rx_bytes += len;
+    if (__builtin_preserve_access_index(xdp->flags) & 1)
+        value->rx_frag_packets++;
     return 0;
 }
 
