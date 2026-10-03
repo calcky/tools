@@ -17,6 +17,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [netcap](netcap/README.md) | 在指定内核函数处抓取 skb 报文，支持 pcap 输出 |
 | [xpcap](xpcap/README.md) | 同屏抓取 AF_XDP 与常规网口流量，可观察 XDP 阶段 |
 | [xsktop](xsktop/README.md) | 查看 AF_XDP socket 的队列流量、错误和所属进程 |
+| [droptop](droptop/README.md) | 按丢包原因、网卡与调用位置聚合 skb 丢包，查看样本与内核调用栈 |
 | [gomemtop](gomemtop/README.md) | 分析 Go pprof 堆增长和本机进程 RSS 来源 |
 
 从[安装与使用](getting-started.md)开始。
@@ -36,6 +37,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
 | xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | xsktop | [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
+| droptop | [droptop-release](https://github.com/calcky/tools/releases/tag/droptop-release) |
 | gomemtop | [gomemtop-release](https://github.com/calcky/tools/releases/tag/gomemtop-release) |
 
 ## 其他脚本

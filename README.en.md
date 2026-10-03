@@ -18,6 +18,8 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages and PCAPNG output |
 | [xsktop](xsktop/README.md) | Live AF_XDP socket rates, errors and process ownership |
+| [droptop](droptop/README.md) | Aggregate kernel skb drop rates by reason, interface and site, with call stacks |
+| [bpfmap](bpfmap/README.md) | Read-only BPF map inventory, BTF-decoded entry preview and interval deltas |
 | [gomemtop](gomemtop/README.md) | Live Go pprof heap growth and local process RSS analysis |
 | [systop](systop/README.md) | eBPF syscall, process and thread call-rate top |
 

@@ -126,4 +126,5 @@ nav:
       - netcap: netcap/README.md
       - xpcap: xpcap/README.md
       - xsktop: xsktop/README.md
+      - droptop: droptop/README.md
       - gomemtop: gomemtop/README.md

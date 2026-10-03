@@ -14,7 +14,7 @@ import markdown
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = Path(os.environ.get("DOCS_SITE_DIR", ROOT / "site"))
-TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace", "bpftop", "nettrace", "netcap", "xpcap", "xsktop", "gomemtop")
+TOOLS = ("irqtop", "netping", "flowgen", "cttop", "netlens", "bpftrace", "bpftop", "nettrace", "netcap", "xpcap", "xsktop", "droptop", "gomemtop")
 NETLENS_REFERENCE = (
     "netlens/docs/cli",
     "netlens/docs/interfaces",

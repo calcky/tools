@@ -12,6 +12,8 @@ XSKTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 GOMEMTOP_TARGET_DIR ?= gomemtop/target
 SYSTOP_TARGET_DIR ?= systop/target
 SYSTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+BPFMAP_TARGET_DIR ?= bpfmap/target
+BPFMAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
@@ -20,8 +22,23 @@ BINDIR ?= $(PREFIX)/bin
 .PHONY: xsktop check-xsktop install-xsktop
 .PHONY: gomemtop check-gomemtop install-gomemtop
 .PHONY: systop check-systop install-systop
+.PHONY: bpfmap check-bpfmap install-bpfmap
 
 all: irqtop netping flowgen cttop netlens xpcap xsktop gomemtop systop
+all: bpfmap
+
+bpfmap:
+	LIBBPF_SYS_LIBRARY_PATH="$(BPFMAP_LIB_DIR)" $(CARGO) build --manifest-path bpfmap/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(BPFMAP_TARGET_DIR))"
+	install -D -m 755 "$(BPFMAP_TARGET_DIR)/release/bpfmap" bin/bpfmap
+
+check-bpfmap:
+	$(CARGO) fmt --manifest-path bpfmap/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(BPFMAP_LIB_DIR)" $(CARGO) test --manifest-path bpfmap/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(BPFMAP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(BPFMAP_LIB_DIR)" $(CARGO) clippy --manifest-path bpfmap/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(BPFMAP_TARGET_DIR))" -- -D warnings
+
+install-bpfmap:
+	test -x bin/bpfmap
+	install -D -m 755 bin/bpfmap "$(DESTDIR)$(BINDIR)/bpfmap"
 
 irqtop:
 	$(CARGO) build --manifest-path irqtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(TARGET_DIR))"
@@ -61,6 +78,7 @@ systop:
 	install -D -m 755 "$(SYSTOP_TARGET_DIR)/release/systop" bin/systop
 
 check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop check-gomemtop check-systop
+check: check-bpfmap
 
 check-irqtop:
 	$(CARGO) fmt --manifest-path irqtop/Cargo.toml -- --check
@@ -108,6 +126,7 @@ check-systop:
 	LIBBPF_SYS_LIBRARY_PATH="$(SYSTOP_LIB_DIR)" $(CARGO) clippy --manifest-path systop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(SYSTOP_TARGET_DIR))" -- -D warnings
 
 install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop install-gomemtop install-systop
+install: install-bpfmap
 
 install-irqtop:
 	test -x bin/irqtop

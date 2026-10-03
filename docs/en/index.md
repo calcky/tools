@@ -17,6 +17,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netcap](netcap/README.md) | Capture skb packets at selected kernel functions and write pcap files |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages |
 | [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership |
+| [droptop](droptop/README.md) | Aggregate skb drops by reason, interface and call site; inspect samples and kernel stacks |
 | [gomemtop](gomemtop/README.md) | Analyze Go pprof heap growth and local process RSS |
 
 Start with [Installation](getting-started.md).
@@ -36,6 +37,7 @@ Start with [Installation](getting-started.md).
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
 | xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | xsktop | [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
+| droptop | [droptop-release](https://github.com/calcky/tools/releases/tag/droptop-release) |
 | gomemtop | [gomemtop-release](https://github.com/calcky/tools/releases/tag/gomemtop-release) |
 
 ## Other Scripts
