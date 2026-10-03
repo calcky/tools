@@ -145,3 +145,25 @@ install-gomemtop:
 install-systop:
 	test -x bin/systop
 	install -D -m 755 bin/systop "$(DESTDIR)$(BINDIR)/systop"
+
+DROPTOP_TARGET_DIR ?= droptop/target
+DROPTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+
+.PHONY: droptop check-droptop install-droptop
+
+all: droptop
+check: check-droptop
+install: install-droptop
+
+droptop:
+	LIBBPF_SYS_LIBRARY_PATH="$(DROPTOP_LIB_DIR)" $(CARGO) build --manifest-path droptop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(DROPTOP_TARGET_DIR))"
+	install -D -m 755 "$(DROPTOP_TARGET_DIR)/release/droptop" bin/droptop
+
+check-droptop:
+	$(CARGO) fmt --manifest-path droptop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(DROPTOP_LIB_DIR)" $(CARGO) test --manifest-path droptop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(DROPTOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(DROPTOP_LIB_DIR)" $(CARGO) clippy --manifest-path droptop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(DROPTOP_TARGET_DIR))" -- -D warnings
+
+install-droptop:
+	test -x bin/droptop
+	install -D -m 755 bin/droptop "$(DESTDIR)$(BINDIR)/droptop"
