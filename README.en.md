@@ -19,6 +19,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages and PCAPNG output |
 | [xsktop](xsktop/README.md) | Live AF_XDP socket rates, errors and process ownership |
 | [gomemtop](gomemtop/README.md) | Live Go pprof heap growth and local process RSS analysis |
+| [systop](systop/README.md) | eBPF syscall, process and thread call-rate top |
 
 The repository also includes `irq-affinity.sh` for configuring IRQ/RPS.
 The affinity script changes IRQ/RPS configuration.

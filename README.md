@@ -19,6 +19,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [xpcap](xpcap/README.md) | 同时抓取 AF_XDP 与常规网口流量，支持 XDP 阶段和 PCAPNG |
 | [xsktop](xsktop/README.md) | 实时查看 AF_XDP socket 的队列流量、错误和进程归属 |
 | [gomemtop](gomemtop/README.md) | 从 Go pprof 服务采样，实时分析堆占用与增长调用栈 |
+| [systop](systop/README.md) | eBPF 实时统计系统调用、进程与线程调用速率 |
 
 另有 `irq-affinity.sh` 脚本，用于修改 IRQ/RPS 配置。
 

@@ -1,0 +1,13 @@
+FROM --platform=linux/amd64 alpine:3.22 AS libs
+RUN apk add --no-cache elfutils-dev zlib-static argp-standalone
+
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:0.2.5
+COPY --from=libs /usr/lib/libelf.a /usr/lib/libz.a /usr/lib/libargp.a /opt/systop/lib/
+COPY --from=libs /usr/include/gelf.h /usr/include/libelf.h /usr/include/argp.h /opt/systop/include/
+COPY --from=libs /usr/include/zlib.h /usr/include/zconf.h /opt/systop/include/
+RUN ar d /opt/systop/lib/libelf.a crc32.o
+RUN curl -fsSL https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz -o /tmp/zstd.tar.gz && \
+    echo '37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3  /tmp/zstd.tar.gz' | sha256sum -c - && \
+    tar -xzf /tmp/zstd.tar.gz -C /tmp && \
+    make -C /tmp/zstd-1.5.7/lib -j2 libzstd.a CC=x86_64-linux-musl-gcc AR=x86_64-linux-musl-ar CFLAGS='-O2 -fPIC' && \
+    cp /tmp/zstd-1.5.7/lib/libzstd.a /opt/systop/lib/

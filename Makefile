@@ -10,6 +10,8 @@ XPCAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 XSKTOP_TARGET_DIR ?= xsktop/target
 XSKTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 GOMEMTOP_TARGET_DIR ?= gomemtop/target
+SYSTOP_TARGET_DIR ?= systop/target
+SYSTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
@@ -17,8 +19,9 @@ BINDIR ?= $(PREFIX)/bin
 
 .PHONY: xsktop check-xsktop install-xsktop
 .PHONY: gomemtop check-gomemtop install-gomemtop
+.PHONY: systop check-systop install-systop
 
-all: irqtop netping flowgen cttop netlens xpcap xsktop gomemtop
+all: irqtop netping flowgen cttop netlens xpcap xsktop gomemtop systop
 
 irqtop:
 	$(CARGO) build --manifest-path irqtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(TARGET_DIR))"
@@ -53,7 +56,11 @@ gomemtop:
 	$(CARGO) build --manifest-path gomemtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))"
 	install -D -m 755 "$(GOMEMTOP_TARGET_DIR)/release/gomemtop" bin/gomemtop
 
-check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop check-gomemtop
+systop:
+	LIBBPF_SYS_LIBRARY_PATH="$(SYSTOP_LIB_DIR)" $(CARGO) build --manifest-path systop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(SYSTOP_TARGET_DIR))"
+	install -D -m 755 "$(SYSTOP_TARGET_DIR)/release/systop" bin/systop
+
+check: check-irqtop check-netping check-flowgen check-cttop check-netlens check-xpcap check-xsktop check-gomemtop check-systop
 
 check-irqtop:
 	$(CARGO) fmt --manifest-path irqtop/Cargo.toml -- --check
@@ -95,7 +102,12 @@ check-gomemtop:
 	$(CARGO) test --manifest-path gomemtop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))"
 	$(CARGO) clippy --manifest-path gomemtop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(GOMEMTOP_TARGET_DIR))" -- -D warnings
 
-install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop install-gomemtop
+check-systop:
+	$(CARGO) fmt --manifest-path systop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(SYSTOP_LIB_DIR)" $(CARGO) test --manifest-path systop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(SYSTOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(SYSTOP_LIB_DIR)" $(CARGO) clippy --manifest-path systop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(SYSTOP_TARGET_DIR))" -- -D warnings
+
+install: install-irqtop install-netping install-flowgen install-cttop install-netlens install-xpcap install-xsktop install-gomemtop install-systop
 
 install-irqtop:
 	test -x bin/irqtop
@@ -129,3 +141,7 @@ install-xsktop:
 install-gomemtop:
 	test -x bin/gomemtop
 	install -D -m 755 bin/gomemtop "$(DESTDIR)$(BINDIR)/gomemtop"
+
+install-systop:
+	test -x bin/systop
+	install -D -m 755 bin/systop "$(DESTDIR)$(BINDIR)/systop"
