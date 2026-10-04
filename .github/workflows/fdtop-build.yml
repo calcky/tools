@@ -1,0 +1,165 @@
+name: Build fdtop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    tags: ["fdtop-release"]
+    paths:
+      - "fdtop/**"
+      - "Makefile"
+      - ".github/workflows/fdtop-build.yml"
+  pull_request:
+    paths:
+      - "fdtop/**"
+      - "Makefile"
+      - ".github/workflows/fdtop-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: fdtop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - name: Install BPF dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev libelf-dev zlib1g-dev libzstd-dev pkg-config
+      - name: Check
+        env:
+          LIBBPF_SYS_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu
+        run: |
+          cargo fmt -- --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+
+  build:
+    name: Linux ${{ matrix.arch }} (static musl)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            machine: AArch64
+            bpf_arch: arm64
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+            machine: X86-64
+            bpf_arch: x86
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C target-feature=+crt-static"
+      FDTOP_BPF_DIR: target/bpf
+      LIBBPF_SYS_LIBRARY_PATH: /opt/fdtop/lib
+      LIBBPF_SYS_EXTRA_CFLAGS: "-I/opt/fdtop/include"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install BPF compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev
+      - name: Compile portable BPF object
+        working-directory: fdtop
+        run: |
+          mkdir -p target/bpf
+          for mode in 0 1; do
+            name=observe-light.bpf.o
+            if [ "$mode" = 1 ]; then name=observe.bpf.o; fi
+            clang -target bpf -O2 -g -Wall -Werror -D__TARGET_ARCH_${{ matrix.bpf_arch }} -DFDTOP_LATENCY=$mode -I/usr/include/$(cc -dumpmachine) -c bpf/observe.bpf.c -o target/bpf/$name
+          done
+          clang -target bpf -O2 -g -Wall -Werror -D__TARGET_ARCH_${{ matrix.bpf_arch }} -I/usr/include/$(cc -dumpmachine) -c bpf/events.bpf.c -o target/bpf/events.bpf.o
+      - name: Install cross 0.2.5
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+            --output cross.tar.gz
+          echo 'a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588  cross.tar.gz' | sha256sum --check
+          mkdir -p cross-bin
+          tar -xzf cross.tar.gz -C cross-bin
+          echo "$RUNNER_TEMP/cross-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'x86_64'
+        with:
+          platforms: arm,arm64
+      - name: Build static executable
+        working-directory: fdtop
+        run: cross build --release --locked --target '${{ matrix.target }}'
+      - name: Startup check
+        working-directory: fdtop
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$(target/${{ matrix.target }}/release/fdtop -v)" = "fdtop $version"
+      - name: Verify ELF and prepare executable
+        run: |
+          binary='fdtop/target/${{ matrix.target }}/release/fdtop'
+          readelf -h "$binary" | grep -q 'Machine:.*${{ matrix.machine }}'
+          if readelf -lW "$binary" | grep -q INTERP; then exit 1; fi
+          if readelf -dW "$binary" 2>&1 | grep -q NEEDED; then exit 1; fi
+          test -s "$binary"
+          install -D -m 755 "$binary" 'dist/fdtop-linux-${{ matrix.arch }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fdtop-linux-${{ matrix.arch }}
+          path: dist/fdtop-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref == 'refs/tags/fdtop-release'
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("fdtop/Cargo.toml", "rb"))["package"]["version"])')
+          test -n "$version"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fdtop-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Verify release assets
+        run: |
+          for arch in arm64 x86_64; do
+            test -s "dist/fdtop-linux-$arch"
+          done
+          (cd dist && sha256sum fdtop-linux-arm64 fdtop-linux-x86_64 > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+      - name: Publish executables
+        run: |
+          assets=(dist/fdtop-linux-arm64 dist/fdtop-linux-x86_64 dist/SHA256SUMS)
+          notes='Application I/O by process and FD, complete process FD inventory, and optional FD lifecycle events. See fdtop/README.md for usage.'
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --title "fdtop v${RELEASE_VERSION}" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --draft --verify-tag --title "fdtop v${RELEASE_VERSION}" --notes "$notes"
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi

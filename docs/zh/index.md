@@ -1,5 +1,7 @@
 # Linux tools
 
+[fdtop](fdtop/README.md)：按进程与 FD 查看应用 I/O，并按需跟踪 FD 生命周期事件。
+
 Linux 调试、监控与测试工具集，各工具独立运行。
 
 ## 选择工具

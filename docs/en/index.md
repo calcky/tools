@@ -4,6 +4,8 @@ Small, standalone Linux debugging, monitoring and testing tools.
 
 ## Choose A Tool
 
+[fdtop](fdtop/README.md): application I/O by process and FD, with optional lifecycle events.
+
 | Tool | Purpose |
 | --- | --- |
 | [irqtop / irqstat](irqtop/README.md) | Interrupt rates, CPU distribution and softnet |

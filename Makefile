@@ -186,3 +186,23 @@ check-droptop:
 install-droptop:
 	test -x bin/droptop
 	install -D -m 755 bin/droptop "$(DESTDIR)$(BINDIR)/droptop"
+
+FDTOP_TARGET_DIR ?= fdtop/target
+FDTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+.PHONY: fdtop check-fdtop install-fdtop
+all: fdtop
+check: check-fdtop
+install: install-fdtop
+
+fdtop:
+	LIBBPF_SYS_LIBRARY_PATH="$(FDTOP_LIB_DIR)" $(CARGO) build --manifest-path fdtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(FDTOP_TARGET_DIR))"
+	install -D -m 755 "$(FDTOP_TARGET_DIR)/release/fdtop" bin/fdtop
+
+check-fdtop:
+	$(CARGO) fmt --manifest-path fdtop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(FDTOP_LIB_DIR)" $(CARGO) test --manifest-path fdtop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(FDTOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(FDTOP_LIB_DIR)" $(CARGO) clippy --manifest-path fdtop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(FDTOP_TARGET_DIR))" -- -D warnings
+
+install-fdtop:
+	test -x bin/fdtop
+	install -D -m 755 bin/fdtop "$(DESTDIR)$(BINDIR)/fdtop"
