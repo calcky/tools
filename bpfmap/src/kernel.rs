@@ -364,6 +364,28 @@ fn delta(old: Option<&Vec<u8>>, current: &[u8], unsigned_size: Option<usize>) ->
     }
 }
 
+fn percpu_numeric_delta(old: Option<&Vec<u8>>, current: &[u8], value_size: usize) -> String {
+    let Some(old) = old else { return "new".into() };
+    if old == current {
+        return "=".into();
+    }
+    if old.len() != current.len() {
+        return "changed".into();
+    }
+    let sum = |values: &[u8]| {
+        values
+            .chunks_exact(value_size)
+            .filter_map(unsigned)
+            .map(u128::from)
+            .sum::<u128>()
+    };
+    match (sum(old), sum(current)) {
+        (before, after) if after > before => format!("+{}", after - before),
+        (before, after) if after == before => "changed".into(),
+        _ => "reset/-".into(),
+    }
+}
+
 fn bounded_entries(
     key_size: usize,
     value_size: usize,
@@ -464,30 +486,10 @@ pub fn preview(
             continue;
         };
         let change = if info.ty.is_percpu() {
-            if numeric_size.is_some() {
-                let size = numeric_size.unwrap_or_default();
-                let previous_sum = previous.get(&key).and_then(|old| {
-                    (old.len() == raw.len()).then(|| {
-                        old.chunks_exact(size)
-                            .filter_map(unsigned)
-                            .map(u128::from)
-                            .sum::<u128>()
-                    })
-                });
-                let current_sum: u128 = raw
-                    .chunks_exact(size)
-                    .filter_map(unsigned)
-                    .map(u128::from)
-                    .sum();
-                match previous_sum {
-                    None => "new".into(),
-                    Some(old) if current_sum >= old => format!("+{}", current_sum - old),
-                    Some(_) => "reset/-".into(),
-                }
-            } else if previous.get(&key).is_some_and(|old| old == &raw) {
-                "=".into()
+            if let Some(size) = numeric_size {
+                percpu_numeric_delta(previous.get(&key), &raw, size)
             } else {
-                "changed".into()
+                delta(previous.get(&key), &raw, None)
             }
         } else {
             previous
@@ -520,6 +522,8 @@ mod tests {
     #[test]
     fn delta_handles_baseline_and_reset() {
         assert_eq!(delta(None, &5_u32.to_ne_bytes(), Some(4)), "new");
+        assert_eq!(delta(None, &[1, 2, 3], None), "new");
+        assert_eq!(delta(Some(&vec![1, 2, 3]), &[1, 2, 3], None), "=");
         assert_eq!(
             delta(
                 Some(&5_u32.to_ne_bytes().to_vec()),
@@ -547,6 +551,28 @@ mod tests {
                 None
             ),
             "changed"
+        );
+    }
+
+    #[test]
+    fn percpu_delta_distinguishes_unchanged_and_redistributed_values() {
+        let bytes = |values: [u64; 2]| {
+            values
+                .into_iter()
+                .flat_map(u64::to_ne_bytes)
+                .collect::<Vec<_>>()
+        };
+        let old = bytes([1, 2]);
+        assert_eq!(percpu_numeric_delta(None, &old, 8), "new");
+        assert_eq!(percpu_numeric_delta(Some(&old), &old, 8), "=");
+        assert_eq!(
+            percpu_numeric_delta(Some(&old), &bytes([0, 3]), 8),
+            "changed"
+        );
+        assert_eq!(percpu_numeric_delta(Some(&old), &bytes([2, 4]), 8), "+3");
+        assert_eq!(
+            percpu_numeric_delta(Some(&old), &bytes([0, 1]), 8),
+            "reset/-"
         );
     }
 

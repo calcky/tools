@@ -8,12 +8,13 @@ use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use kernel::{Btf, Inventory, Preview};
-use libbpf_rs::MapHandle;
+use kernel::{Btf, Inventory, MapRow, Preview};
+use libbpf_rs::{MapHandle, MapType};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
@@ -72,6 +73,14 @@ struct Detail {
     preview: Option<Preview>,
     selected: usize,
     error: Option<String>,
+}
+
+struct DetailView<'a> {
+    row: &'a MapRow,
+    btf_decoded: bool,
+    preview: Option<&'a Preview>,
+    selected: usize,
+    error: Option<&'a str>,
 }
 
 struct App {
@@ -255,6 +264,15 @@ fn style(app: &App, highlighted: bool) -> Style {
     }
 }
 
+fn selected_style(app: &App) -> Style {
+    let selected = Style::default().add_modifier(Modifier::BOLD);
+    if app.no_color {
+        selected
+    } else {
+        selected.bg(Color::Rgb(31, 64, 52)).fg(Color::White)
+    }
+}
+
 fn delta_style(app: &App, delta: &str) -> Style {
     if app.no_color {
         return Style::default();
@@ -264,7 +282,7 @@ fn delta_style(app: &App, delta: &str) -> Style {
             Style::default().fg(Color::Green)
         }
         value if value.contains("reset") => Style::default().fg(Color::Red),
-        "changed" => Style::default().fg(Color::Yellow),
+        "changed" | "new" => Style::default().fg(Color::Yellow),
         _ => Style::default(),
     }
 }
@@ -283,12 +301,63 @@ fn clipped(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_owned();
     }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
     format!(
         "{}...",
         text.chars()
             .take(width.saturating_sub(3))
             .collect::<String>()
     )
+}
+
+fn capacity(info: &kernel::MapMeta) -> String {
+    if matches!(info.ty, MapType::RingBuf | MapType::UserRingBuf) {
+        format!("{} B", info.max_entries)
+    } else {
+        info.max_entries.to_string()
+    }
+}
+
+fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &App, view: &str) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+        .split(area);
+    let brand = if app.no_color {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("bpfmap", brand),
+            Span::raw(format!("  /  {view}")),
+        ])),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new("READ ONLY")
+            .alignment(Alignment::Right)
+            .style(if app.no_color {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            }),
+        columns[1],
+    );
+}
+
+fn draw_footer(frame: &mut ratatui::Frame, area: Rect, text: &str) {
+    frame.render_widget(
+        Paragraph::new(text).block(Block::default().borders(Borders::TOP)),
+        area,
+    );
 }
 
 fn draw_frame(frame: &mut ratatui::Frame, app: &App) {
@@ -319,13 +388,15 @@ fn draw_list(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(2),
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(3),
+            Constraint::Length(2),
         ])
         .split(area);
+    draw_header(frame, parts[0], app, "MAPS");
     let status = format!(
-        "{} maps | {} inaccessible | pin scan {}{}",
+        "{} maps | {} inaccessible | pins {} | list {}",
         app.inventory.maps.len(),
         app.inventory.inaccessible,
         if app.inventory.pins_truncated {
@@ -334,40 +405,55 @@ fn draw_list(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             "complete"
         },
         if app.inventory.maps_truncated {
-            " | map list truncated"
+            "partial"
         } else {
-            ""
+            "complete"
         }
     );
     frame.render_widget(
-        Paragraph::new(status).block(Block::default().borders(Borders::ALL).title("BPF MAPS")),
-        parts[0],
+        Paragraph::new(status).block(Block::default().borders(Borders::ALL).title("Inventory")),
+        parts[1],
     );
-    let height = usize::from(parts[1].height.saturating_sub(3));
+    let compact = area.width < 80;
+    let height = usize::from(parts[2].height.saturating_sub(3));
     let rows = visible_range(app.selected, app.inventory.maps.len(), height)
         .map(|index| {
             let map = &app.inventory.maps[index];
             let info = &map.info;
-            let pin = if map.pins.is_empty() {
-                "-".into()
-            } else {
-                map.pins.join(", ")
-            };
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(info.id.to_string()),
                 Cell::from(info.name.clone()),
                 Cell::from(format!("{:?}", info.ty)),
-                Cell::from(info.max_entries.to_string()),
+                Cell::from(capacity(info)),
                 Cell::from(info.key_size.to_string()),
                 Cell::from(info.value_size.to_string()),
-                Cell::from(pin),
-            ])
-            .style(style(app, index == app.selected))
+            ];
+            if !compact {
+                let pin = if map.pins.is_empty() {
+                    "-".into()
+                } else {
+                    map.pins.join(", ")
+                };
+                cells.push(Cell::from(pin));
+            }
+            Row::new(cells).style(if index == app.selected {
+                selected_style(app)
+            } else {
+                Style::default()
+            })
         })
         .collect::<Vec<_>>();
-    let table = Table::new(
-        rows,
-        [
+    let widths = if compact {
+        vec![
+            Constraint::Length(6),
+            Constraint::Length(14),
+            Constraint::Length(14),
+            Constraint::Length(8),
+            Constraint::Length(4),
+            Constraint::Length(5),
+        ]
+    } else {
+        vec![
             Constraint::Length(7),
             Constraint::Length(16),
             Constraint::Length(16),
@@ -375,33 +461,25 @@ fn draw_list(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Constraint::Length(5),
             Constraint::Length(5),
             Constraint::Min(10),
-        ],
-    )
-    .header(
-        Row::new(["ID", "NAME", "TYPE", "CAPACITY", "KEY", "VALUE", "PIN PATH"])
-            .style(style(app, true)),
-    )
-    .block(Block::default().borders(Borders::ALL).title("Maps"));
-    frame.render_widget(table, parts[1]);
+        ]
+    };
+    let headers = if compact {
+        vec!["ID", "NAME", "TYPE", "CAPACITY", "KEY", "VALUE"]
+    } else {
+        vec!["ID", "NAME", "TYPE", "CAPACITY", "KEY", "VALUE", "PIN PATH"]
+    };
+    let table = Table::new(rows, widths)
+        .header(Row::new(headers).style(style(app, true)))
+        .block(Block::default().borders(Borders::ALL).title("Maps"));
+    frame.render_widget(table, parts[2]);
     let footer = app
         .message
         .as_deref()
         .unwrap_or("Enter detail   j/k move   r refresh   h help   q quit");
-    frame.render_widget(
-        Paragraph::new(footer).block(Block::default().borders(Borders::ALL)),
-        parts[2],
-    );
+    draw_footer(frame, parts[3], footer);
 }
 
 fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detail) {
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Min(5),
-            Constraint::Length(3),
-        ])
-        .split(area);
     let Some(row) = app
         .inventory
         .maps
@@ -410,7 +488,39 @@ fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detai
     else {
         return;
     };
+    draw_detail_view(
+        frame,
+        area,
+        app,
+        DetailView {
+            row,
+            btf_decoded: detail.btf.is_some(),
+            preview: detail.preview.as_ref(),
+            selected: detail.selected,
+            error: detail.error.as_deref(),
+        },
+    );
+}
+
+fn draw_detail_view(frame: &mut ratatui::Frame, area: Rect, app: &App, view: DetailView<'_>) {
+    let DetailView {
+        row,
+        btf_decoded,
+        preview,
+        selected,
+        error,
+    } = view;
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(5),
+            Constraint::Min(5),
+            Constraint::Length(2),
+        ])
+        .split(area);
     let info = &row.info;
+    draw_header(frame, parts[0], app, &format!("MAP #{}", info.id));
     let pin = if row.pins.is_empty() {
         "-".to_owned()
     } else {
@@ -425,49 +535,79 @@ fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detai
         )
     };
     let pin = clipped(&pin, usize::from(area.width.saturating_sub(8)));
-    let title = format!("MAP {}  {}  {:?}", info.id, info.name, info.ty);
+    let title = format!("MAP #{}  {}  {:?}", info.id, info.name, info.ty);
+    let btf_status = if !kernel::previewable(info.ty) {
+        "n/a"
+    } else if btf_decoded {
+        "decoded"
+    } else {
+        "hex"
+    };
+    let metrics = if area.width < 90 {
+        format!(
+            "capacity {} | key {} B | value {} B | BTF {}",
+            capacity(info),
+            info.key_size,
+            info.value_size,
+            btf_status,
+        )
+    } else {
+        format!(
+            "capacity {} | key {} B | value {} B | BTF {} | interval {:.1}s",
+            capacity(info),
+            info.key_size,
+            info.value_size,
+            btf_status,
+            app.interval.as_secs_f64(),
+        )
+    };
     let metadata = format!(
-        "capacity {} | key {} B | value {} B | BTF {} | interval {:.1}s\npin: {}\n{}",
-        info.max_entries,
-        info.key_size,
-        info.value_size,
-        if detail.btf.is_some() {
-            "decoded"
-        } else {
-            "unavailable (hex)"
-        },
-        app.interval.as_secs_f64(),
+        "{}\npin: {}\n{}",
+        clipped(&metrics, usize::from(area.width.saturating_sub(2))),
         pin,
-        detail.error.as_deref().unwrap_or_else(|| {
-            if detail.preview.as_ref().is_some_and(|p| p.truncated) {
-                "first entries only; more exist"
-            } else {
-                "preview within limit"
-            }
-        }),
+        if preview.is_none() {
+            "no key/value preview"
+        } else if preview.is_some_and(|p| p.truncated) {
+            "first entries only; more exist"
+        } else {
+            "preview within limit"
+        },
     );
     frame.render_widget(
         Paragraph::new(metadata).block(Block::default().borders(Borders::ALL).title(title)),
-        parts[0],
+        parts[1],
     );
-    let empty = Preview {
-        entries: Vec::new(),
-        truncated: false,
-        read_errors: 0,
-        baseline: HashMap::new(),
+    let Some(preview) = preview else {
+        let message_area = Rect {
+            height: parts[2].height.min(4),
+            ..parts[2]
+        };
+        frame.render_widget(
+            Paragraph::new(error.unwrap_or("No entries available")).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(if kernel::previewable(info.ty) {
+                        "Preview unavailable"
+                    } else {
+                        "Metadata only"
+                    }),
+            ),
+            message_area,
+        );
+        draw_footer(frame, parts[3], "Esc maps | r refresh | h help | q quit");
+        return;
     };
-    let preview = detail.preview.as_ref().unwrap_or(&empty);
-    let (table_area, selected_area) = if parts[1].height >= 12 {
+    let (table_area, selected_area) = if parts[2].height >= 12 {
         let content = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(4), Constraint::Length(5)])
-            .split(parts[1]);
+            .split(parts[2]);
         (content[0], Some(content[1]))
     } else {
-        (parts[1], None)
+        (parts[2], None)
     };
     let height = usize::from(table_area.height.saturating_sub(3));
-    let rows = visible_range(detail.selected, preview.entries.len(), height)
+    let rows = visible_range(selected, preview.entries.len(), height)
         .map(|index| {
             let entry = &preview.entries[index];
             Row::new(vec![
@@ -475,7 +615,11 @@ fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detai
                 Cell::from(entry.value.clone()),
                 Cell::from(entry.delta.clone()).style(delta_style(app, &entry.delta)),
             ])
-            .style(style(app, index == detail.selected))
+            .style(if index == selected {
+                selected_style(app)
+            } else {
+                Style::default()
+            })
         })
         .collect::<Vec<_>>();
     let table = Table::new(
@@ -496,7 +640,7 @@ fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detai
     )));
     frame.render_widget(table, table_area);
     if let Some(selected_area) = selected_area {
-        let selected = preview.entries.get(detail.selected);
+        let selected = preview.entries.get(selected);
         let width = usize::from(selected_area.width.saturating_sub(10));
         let text = selected.map_or_else(
             || "No entries in preview".to_owned(),
@@ -518,10 +662,10 @@ fn draw_detail(frame: &mut ratatui::Frame, area: Rect, app: &App, detail: &Detai
             selected_area,
         );
     }
-    frame.render_widget(
-        Paragraph::new("Esc maps | j/k move | r refresh | h help | q quit")
-            .block(Block::default().borders(Borders::ALL)),
-        parts[2],
+    draw_footer(
+        frame,
+        parts[3],
+        "Esc maps | j/k move | r refresh | h help | q quit",
     );
 }
 
@@ -561,18 +705,12 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::{Entry, MapMeta};
+    use libbpf_rs::MapType;
     use ratatui::backend::TestBackend;
 
-    #[test]
-    fn bounded_viewport() {
-        assert_eq!(visible_range(90, 100, 10), 85..95);
-        assert_eq!(visible_range(2, 5, 10), 0..5);
-        assert_eq!(visible_range(0, 0, 10), 0..0);
-    }
-
-    #[test]
-    fn list_renders_at_80_columns() {
-        let app = App {
+    fn test_app() -> App {
+        App {
             inventory: Inventory {
                 maps: Vec::new(),
                 pins_truncated: false,
@@ -589,17 +727,135 @@ mod tests {
             interval: Duration::from_secs(1),
             entry_limit: 64,
             no_color: true,
-        };
+        }
+    }
+
+    fn test_map(ty: MapType) -> MapRow {
+        MapRow {
+            info: MapMeta {
+                id: 42,
+                name: "test_map".into(),
+                ty,
+                key_size: 4,
+                value_size: 8,
+                max_entries: 16,
+                btf_id: 0,
+                btf_key_type_id: 0,
+                btf_value_type_id: 0,
+            },
+            pins: vec!["/sys/fs/bpf/test_map".into()],
+        }
+    }
+
+    #[test]
+    fn bounded_viewport() {
+        assert_eq!(visible_range(90, 100, 10), 85..95);
+        assert_eq!(visible_range(2, 5, 10), 0..5);
+        assert_eq!(visible_range(0, 0, 10), 0..0);
+    }
+
+    #[test]
+    fn list_renders_at_80_columns() {
+        let mut app = test_app();
+        app.inventory.maps.push(test_map(MapType::Hash));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|frame| draw_frame(frame, &app)).unwrap();
         let text = format!("{:?}", terminal.backend().buffer());
-        assert!(text.contains("BPF MAPS"));
+        assert!(text.contains("Inventory"));
+        assert!(text.contains("READ ONLY"));
+        assert!(text.contains("test_map"));
         assert!(text.contains("Enter detail"));
+    }
+
+    #[test]
+    fn narrow_list_keeps_key_and_value_sizes() {
+        let mut app = test_app();
+        app.inventory.maps.push(test_map(MapType::Hash));
+        let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
+        terminal.draw(|frame| draw_frame(frame, &app)).unwrap();
+        let text = format!("{:?}", terminal.backend().buffer());
+        assert!(text.contains("test_map"));
+        assert!(text.contains("CAPACITY"));
+        assert!(text.contains("VALUE"));
+        assert!(!text.contains("PIN PATH"));
+    }
+
+    #[test]
+    fn detail_renders_entries_at_80_columns() {
+        let app = test_app();
+        let map = test_map(MapType::Hash);
+        let preview = Preview {
+            entries: vec![Entry {
+                key: "0x00000001".into(),
+                value: "0x0000000000000002".into(),
+                delta: "new".into(),
+            }],
+            truncated: false,
+            read_errors: 0,
+            baseline: HashMap::new(),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_detail_view(
+                    frame,
+                    frame.area(),
+                    &app,
+                    DetailView {
+                        row: &map,
+                        btf_decoded: false,
+                        preview: Some(&preview),
+                        selected: 0,
+                        error: None,
+                    },
+                );
+            })
+            .unwrap();
+        let text = format!("{:?}", terminal.backend().buffer());
+        assert!(text.contains("Entries 1/64"));
+        assert!(text.contains("Selected entry"));
+        assert!(text.contains("new"));
+        assert!(text.contains("BTF hex"));
+    }
+
+    #[test]
+    fn metadata_only_has_no_empty_entries_table() {
+        let app = test_app();
+        let map = test_map(MapType::RingBuf);
+        let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_detail_view(
+                    frame,
+                    frame.area(),
+                    &app,
+                    DetailView {
+                        row: &map,
+                        btf_decoded: false,
+                        preview: None,
+                        selected: 0,
+                        error: Some("this map type is metadata-only"),
+                    },
+                );
+            })
+            .unwrap();
+        let text = format!("{:?}", terminal.backend().buffer());
+        assert!(text.contains("Metadata only"));
+        assert!(text.contains("capacity 16 B"));
+        assert!(!text.contains("Selected entry"));
+        assert!(!text.contains("KEY"));
+    }
+
+    #[test]
+    fn ring_buffer_capacity_is_bytes() {
+        assert_eq!(capacity(&test_map(MapType::RingBuf).info), "16 B");
+        assert_eq!(capacity(&test_map(MapType::Hash).info), "16");
     }
 
     #[test]
     fn clipping_preserves_short_values() {
         assert_eq!(clipped("/sys/fs/bpf/a", 20), "/sys/fs/bpf/a");
         assert_eq!(clipped("123456789", 6), "123...");
+        assert_eq!(clipped("123456789", 2), "..");
     }
 }
