@@ -1,13 +1,12 @@
 # Linux tools
 
-[fdtop](fdtop/README.md)：按进程与 FD 查看应用 I/O，并按需跟踪 FD 生命周期事件。
-
 Linux 调试、监控与测试工具集，各工具独立运行。
 
 ## 选择工具
 
 | 工具 | 用途 |
 | --- | --- |
+| [fdtop](fdtop/README.md) | 按进程与 FD 查看应用 I/O、完整 FD 清单和打开关闭事件 |
 | [irqtop / irqstat](irqtop/README.md) | 查看中断速率、CPU 分布和 softnet |
 | [netping](netping/README.md) | 测量 ICMP、UDP、TCP 延迟，探测 MTU/MSS |
 | [flowgen](flowgen/README.md) | 多会话负载测试，分析 RTT 和 HTML 时序报告 |
@@ -30,6 +29,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 
 | 工具 | 安装来源 |
 | --- | --- |
+| fdtop | [fdtop-release](https://github.com/calcky/tools/releases/tag/fdtop-release) |
 | irqtop / irqstat | [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) |
 | netping | [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | flowgen | [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release) |

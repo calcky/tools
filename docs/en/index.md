@@ -4,10 +4,9 @@ Small, standalone Linux debugging, monitoring and testing tools.
 
 ## Choose A Tool
 
-[fdtop](fdtop/README.md): application I/O by process and FD, with optional lifecycle events.
-
 | Tool | Purpose |
 | --- | --- |
+| [fdtop](fdtop/README.md) | Application I/O by process and FD, complete FD inventories and lifecycle events |
 | [irqtop / irqstat](irqtop/README.md) | Interrupt rates, CPU distribution and softnet |
 | [netping](netping/README.md) | ICMP, UDP and TCP latency, plus MTU/MSS inspection |
 | [flowgen](flowgen/README.md) | Multi-session load, RTT analysis and HTML time-series reports |
@@ -30,6 +29,7 @@ Start with [Installation](getting-started.md).
 
 | Tool | Release |
 | --- | --- |
+| fdtop | [fdtop-release](https://github.com/calcky/tools/releases/tag/fdtop-release) |
 | irqtop / irqstat | [irqtop-release](https://github.com/calcky/tools/releases/tag/irqtop-release) |
 | netping | [netping-release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | flowgen | [flowgen-release](https://github.com/calcky/tools/releases/tag/flowgen-release) |
