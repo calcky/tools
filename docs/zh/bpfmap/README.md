@@ -4,7 +4,13 @@
 
 ## 安装
 
-`bpfmap` 尚未发布官方 GitHub Release 或预编译程序。正式发布后会在此补充已验证的安装命令；开发构建见[项目 README](https://github.com/calcky/tools/blob/master/bpfmap/README.md)。
+以 x86_64 为例；ARMv7、ARM64 版本与校验和见 [bpfmap-release](https://github.com/calcky/tools/releases/tag/bpfmap-release)。
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/bpfmap-release/bpfmap-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 bpfmap-linux-x86_64 "$HOME/.local/bin/bpfmap"
+```
 
 读取 map 元数据通常需要 `CAP_BPF` 或 `CAP_SYS_ADMIN`；读取条目还取决于 map 权限和类型。以下命令假设当前账号已有足够权限。
 

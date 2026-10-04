@@ -38,7 +38,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | netlens | [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
 | bpftop | [bpftop-release](https://github.com/calcky/tools/releases/tag/bpftop-release) |
-| bpfmap | 尚未发布预编译程序 |
+| bpfmap | [bpfmap-release](https://github.com/calcky/tools/releases/tag/bpfmap-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
 | xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |

@@ -4,7 +4,13 @@ A read-only terminal viewer for BPF map types, capacities, key/value sizes, pin 
 
 ## Installation
 
-`bpfmap` has no official GitHub Release or prebuilt binary yet. Verified installation commands will be added after its first release. For development builds, see the [project README](https://github.com/calcky/tools/blob/master/bpfmap/README.md).
+For x86_64, install the static binary below. ARMv7 and ARM64 binaries and checksums are available in [bpfmap-release](https://github.com/calcky/tools/releases/tag/bpfmap-release).
+
+```sh
+curl -fLO https://github.com/calcky/tools/releases/download/bpfmap-release/bpfmap-linux-x86_64
+mkdir -p "$HOME/.local/bin"
+install -m 755 bpfmap-linux-x86_64 "$HOME/.local/bin/bpfmap"
+```
 
 Reading map metadata typically requires `CAP_BPF` or `CAP_SYS_ADMIN`; reading entries also depends on the map's permissions and type. The commands below assume sufficient privileges.
 

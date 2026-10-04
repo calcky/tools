@@ -38,7 +38,7 @@ Start with [Installation](getting-started.md).
 | netlens | [netlens-release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | bpftrace | [bpftrace-release](https://github.com/calcky/tools/releases/tag/bpftrace-release) |
 | bpftop | [bpftop-release](https://github.com/calcky/tools/releases/tag/bpftop-release) |
-| bpfmap | No prebuilt release yet |
+| bpfmap | [bpfmap-release](https://github.com/calcky/tools/releases/tag/bpfmap-release) |
 | nettrace | [nettrace-release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
 | netcap | [netcap-release](https://github.com/calcky/tools/releases/tag/netcap-release) |
 | xpcap | [xpcap-release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
