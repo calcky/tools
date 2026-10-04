@@ -109,10 +109,18 @@ nav:
   - 快速开始:
       - 安装与使用: getting-started.md
   - 工具:
-      - irqtop / irqstat: irqtop/README.md
-      - netping: netping/README.md
-      - flowgen: flowgen/README.md
+      - bpfmap: bpfmap/README.md
+      - bpftop: bpftop/README.md
+      - bpftrace: bpftrace/README.md
+      - cachetop: cachetop/README.md
       - cttop: cttop/README.md
+      - droptop: droptop/README.md
+      - fdtop: fdtop/README.md
+      - flowgen: flowgen/README.md
+      - gomemtop: gomemtop/README.md
+      - irqtop / irqstat: irqtop/README.md
+      - napitop: napitop/README.md
+      - netcap: netcap/README.md
       - netlens:
           - 快速上手: netlens/README.md
           - 连接与进程: netlens/docs/cli.md
@@ -120,15 +128,7 @@ nav:
           - 路由与连接跟踪: netlens/docs/routing.md
           - 指标与数据状态: netlens/docs/monitor-metrics.md
           - 数据包路径: netlens/docs/packet-path.md
-      - bpftrace: bpftrace/README.md
-      - bpftop: bpftop/README.md
-      - bpfmap: bpfmap/README.md
+      - netping: netping/README.md
       - nettrace: nettrace/README.md
-      - netcap: netcap/README.md
       - xpcap: xpcap/README.md
       - xsktop: xsktop/README.md
-      - droptop: droptop/README.md
-      - gomemtop: gomemtop/README.md
-      - fdtop: fdtop/README.md
-      - cachetop: cachetop/README.md
-      - napitop: napitop/README.md

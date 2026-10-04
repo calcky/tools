@@ -2,6 +2,16 @@
 
 ## Tool Documentation
 
+- Keep each overview page to one tool catalog table with columns for tool,
+  purpose, and installation source/Release. Each tool appears once; put its
+  documentation link and Release link in the same row instead of maintaining
+  a separate installation table.
+- Sort overview rows and the sidebar's Tools entries by tool name, A-Z,
+  case-insensitively. For combined names such as `irqtop / irqstat`, sort by
+  the first tool name. Keep the same order in Chinese and English.
+- Apply these rules to the current layout when adding or changing a tool.
+  Keep each tool's nested pages together and retain their reading order;
+  alphabetical sorting applies to the tool entries, not their subpages.
 - In usage examples, invoke the installed executable by its tool name (for
   example `netping ...`), without `sudo`, `./`, `bin/`, an absolute path, or an
   architecture suffix. Keep privilege requirements in prose, separate from
