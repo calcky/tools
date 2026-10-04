@@ -2,7 +2,7 @@
 
 ## Installation
 
-Choose a tool from the [overview](index.md#installation), open its Release, and select your CPU architecture. The example uses x86_64.
+Choose a tool from the [overview](index.md#choose-a-tool), open its Release, and select your CPU architecture. The example uses x86_64.
 
 | CPU Architecture | Asset Suffix |
 | --- | --- |
