@@ -23,6 +23,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [gomemtop](gomemtop/README.md) | 从 Go pprof 服务采样，实时分析堆占用与增长调用栈 |
 | [systop](systop/README.md) | eBPF 实时统计系统调用、进程与线程调用速率 |
 | [cachetop](cachetop/README.md) | 用硬件 PMU 查看 LLC 读未命中、MPKI、IPC 与线程落核 |
+| [napitop](napitop/README.md) | 查看 NAPI poll 工作量、budget 压力、耗时与 CPU 热点 |
 
 另有 `irq-affinity.sh` 脚本，用于修改 IRQ/RPS 配置。
 

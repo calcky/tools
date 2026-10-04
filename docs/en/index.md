@@ -22,6 +22,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [droptop](droptop/README.md) | Aggregate skb drops by reason, interface and call site; inspect samples and kernel stacks |
 | [gomemtop](gomemtop/README.md) | Analyze Go pprof heap growth and local process RSS |
 | [cachetop](cachetop/README.md) | Inspect LLC read misses, MPKI, IPC, and thread placement |
+| [napitop](napitop/README.md) | Inspect NAPI poll work, budget pressure, latency and CPU hotspots |
 
 Start with [Installation](getting-started.md).
 
@@ -43,6 +44,7 @@ Start with [Installation](getting-started.md).
 | droptop | [droptop-release](https://github.com/calcky/tools/releases/tag/droptop-release) |
 | gomemtop | [gomemtop-release](https://github.com/calcky/tools/releases/tag/gomemtop-release) |
 | cachetop | [cachetop-release](https://github.com/calcky/tools/releases/tag/cachetop-release) |
+| napitop | [napitop-release](https://github.com/calcky/tools/releases/tag/napitop-release) |
 
 ## Other Scripts
 

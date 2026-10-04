@@ -14,6 +14,8 @@ SYSTOP_TARGET_DIR ?= systop/target
 SYSTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 BPFMAP_TARGET_DIR ?= bpfmap/target
 BPFMAP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+NAPITOP_TARGET_DIR ?= napitop/target
+NAPITOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
@@ -23,9 +25,27 @@ BINDIR ?= $(PREFIX)/bin
 .PHONY: gomemtop check-gomemtop install-gomemtop
 .PHONY: systop check-systop install-systop
 .PHONY: bpfmap check-bpfmap install-bpfmap
+.PHONY: napitop check-napitop install-napitop
 
 all: irqtop netping flowgen cttop netlens xpcap xsktop gomemtop systop
 all: bpfmap
+all: napitop
+check: check-napitop
+install: install-napitop
+
+napitop:
+	LIBBPF_SYS_LIBRARY_PATH="$(NAPITOP_LIB_DIR)" $(CARGO) build --manifest-path napitop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(NAPITOP_TARGET_DIR))"
+	install -D -m 755 "$(NAPITOP_TARGET_DIR)/release/napitop" bin/napitop
+
+check-napitop:
+	$(CARGO) fmt --manifest-path napitop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(NAPITOP_LIB_DIR)" $(CARGO) test --manifest-path napitop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(NAPITOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(NAPITOP_LIB_DIR)" $(CARGO) clippy --manifest-path napitop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(NAPITOP_TARGET_DIR))" -- -D warnings
+
+install-napitop:
+	test -x bin/napitop
+	install -D -m 755 bin/napitop "$(DESTDIR)$(BINDIR)/napitop"
+
 
 bpfmap:
 	LIBBPF_SYS_LIBRARY_PATH="$(BPFMAP_LIB_DIR)" $(CARGO) build --manifest-path bpfmap/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(BPFMAP_TARGET_DIR))"
