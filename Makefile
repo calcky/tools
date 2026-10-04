@@ -206,3 +206,24 @@ check-fdtop:
 install-fdtop:
 	test -x bin/fdtop
 	install -D -m 755 bin/fdtop "$(DESTDIR)$(BINDIR)/fdtop"
+
+CACHETOP_TARGET_DIR ?= cachetop/target
+
+.PHONY: cachetop check-cachetop install-cachetop
+
+all: cachetop
+check: check-cachetop
+install: install-cachetop
+
+cachetop:
+	$(CARGO) build --manifest-path cachetop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(CACHETOP_TARGET_DIR))"
+	install -D -m 755 "$(CACHETOP_TARGET_DIR)/release/cachetop" bin/cachetop
+
+check-cachetop:
+	$(CARGO) fmt --manifest-path cachetop/Cargo.toml -- --check
+	$(CARGO) test --manifest-path cachetop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(CACHETOP_TARGET_DIR))"
+	$(CARGO) clippy --manifest-path cachetop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(CACHETOP_TARGET_DIR))" -- -D warnings
+
+install-cachetop:
+	test -x bin/cachetop
+	install -D -m 755 bin/cachetop "$(DESTDIR)$(BINDIR)/cachetop"

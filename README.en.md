@@ -22,6 +22,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [bpfmap](bpfmap/README.md) | Read-only BPF map inventory, BTF-decoded entry preview and interval deltas |
 | [gomemtop](gomemtop/README.md) | Live Go pprof heap growth and local process RSS analysis |
 | [systop](systop/README.md) | eBPF syscall, process and thread call-rate top |
+| [cachetop](cachetop/README.md) | Hardware PMU view of LLC read misses, MPKI, IPC and thread placement |
 
 The repository also includes `irq-affinity.sh` for configuring IRQ/RPS.
 The affinity script changes IRQ/RPS configuration.

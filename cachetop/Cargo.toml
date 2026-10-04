@@ -1,0 +1,17 @@
+[package]
+name = "cachetop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+ctrlc = { version = "3.5", features = ["termination"] }
+libc = "0.2"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+
+[profile.release]
+lto = "thin"
+strip = true

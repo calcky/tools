@@ -21,6 +21,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership |
 | [droptop](droptop/README.md) | Aggregate skb drops by reason, interface and call site; inspect samples and kernel stacks |
 | [gomemtop](gomemtop/README.md) | Analyze Go pprof heap growth and local process RSS |
+| [cachetop](cachetop/README.md) | Inspect LLC read misses, MPKI, IPC, and thread placement |
 
 Start with [Installation](getting-started.md).
 
@@ -41,6 +42,7 @@ Start with [Installation](getting-started.md).
 | xsktop | [xsktop-release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
 | droptop | [droptop-release](https://github.com/calcky/tools/releases/tag/droptop-release) |
 | gomemtop | [gomemtop-release](https://github.com/calcky/tools/releases/tag/gomemtop-release) |
+| cachetop | [cachetop-release](https://github.com/calcky/tools/releases/tag/cachetop-release) |
 
 ## Other Scripts
 

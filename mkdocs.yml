@@ -129,3 +129,4 @@ nav:
       - droptop: droptop/README.md
       - gomemtop: gomemtop/README.md
       - fdtop: fdtop/README.md
+      - cachetop: cachetop/README.md

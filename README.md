@@ -22,6 +22,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [bpfmap](bpfmap/README.md) | 只读查看 BPF map 元数据、BTF 键值预览与周期差值 |
 | [gomemtop](gomemtop/README.md) | 从 Go pprof 服务采样，实时分析堆占用与增长调用栈 |
 | [systop](systop/README.md) | eBPF 实时统计系统调用、进程与线程调用速率 |
+| [cachetop](cachetop/README.md) | 用硬件 PMU 查看 LLC 读未命中、MPKI、IPC 与线程落核 |
 
 另有 `irq-affinity.sh` 脚本，用于修改 IRQ/RPS 配置。
 
