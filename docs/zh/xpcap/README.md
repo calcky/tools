@@ -20,9 +20,10 @@ xpcap -i any -c 20 tcp and port 443
 xpcap -i eth0 -S xdp-entry,xdp-exit,redirect -q 3 -T 10
 xpcap -i eth0 -S pcap -ev -c 10 tcp
 xpcap -i eth0 -w trace.pcapng udp and port 9000
+xpcap -i eth0 -w trace.pcapng --print udp and port 9000
 ```
 
-`-i` 必填，可重复指定网口；`-i any` 抓所有网口，不能与其他 `-i` 同用。`-w` 在终端输出之外写 PCAPNG。简单过滤表达式可直接写在命令末尾；含括号时需用 shell 引号包住。
+`-i` 必填，可重复指定网口；`-i any` 抓所有网口，不能与其他 `-i` 同用。`-w` 写 PCAPNG，默认不逐包打印；加 `--print` 可同时打印。不带 `-w` 时照常逐包打印。简单过滤表达式可直接写在命令末尾；含括号时需用 shell 引号包住。
 
 ## 常用选项
 
@@ -32,6 +33,7 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 | `-Q in\|out\|inout` | 收发方向，默认双向；`-Q out` 不包含 XDP 入口、出口与 redirect 阶段 |
 | `-q QUEUE` | XDP/XSK 队列过滤；PCAP 不提供队列号 |
 | `-c EVENTS` / `-T SECONDS` | 全局抓包数量 / 抓包时长上限 |
+| `--print` | 与 `-w` 同用，同时逐包打印；启动状态和结束汇总始终显示 |
 | `-s BYTES` | 每包保存字节数，默认 2048，最大 9216 |
 | `-m N` | 每个阶段约保留 N 个匹配包中的 1 个 |
 | `-B PAGES` | 每 CPU 的 perf buffer 页数，默认 256 |
@@ -40,10 +42,11 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 
 终端的 `PCAP`、`XSK`、`IN/OUT` 和队列分列显示；XDP 行显示 `XDP-ENTRY` 或 `XDP-EXIT`，不再附加 `IN`。`xdp-exit` 表示程序返回点，不是网卡发包。协议摘要包含 TCP flags、seq/ack、窗口与选项。`-v/-e` 只影响终端文本，不改变保存的报文；`-e` 在 `-i any` 下无法凭 SLL 头还原完整的源/目的 MAC。
 
+`-w` 始终写 PCAPNG；把后缀改成 `.pcap` 不会生成传统 PCAP 文件。
+
 ## 过滤表达式
 
-命令末尾的参数按 tcpdump 风格拼接成一个过滤表达式。当前使用
-`pktbaffle` 的 cBPF 子集，常用语法如下：
+命令末尾的参数按 tcpdump 风格拼接成一个过滤表达式。当前使用 `pktbaffle` 的 cBPF 子集，常用语法如下：
 
 ```text
 # 地址和网段
@@ -99,9 +102,7 @@ xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
 xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
 ```
 
-`tcp-fin`、`tcp-syn`、`tcp-rst`、`tcp-push`、`tcp-ack`、`tcp-urg`、
-`tcp-ece`、`tcp-cwr` 可用于 TCP flags；`tcpflags` 是 flags 字段偏移。
-`icmptype`、`icmpcode`、`icmp6type`、`icmp6code` 可用于 ICMP 原始字段。
+`tcp-fin`、`tcp-syn`、`tcp-rst`、`tcp-push`、`tcp-ack`、`tcp-urg`、`tcp-ece`、`tcp-cwr` 可用于 TCP flags；`tcpflags` 是 flags 字段偏移。`icmptype`、`icmpcode`、`icmp6type`、`icmp6code` 可用于 ICMP 原始字段。
 
 这不是完整的 libpcap 语法：`inbound`、`outbound` 和复杂 IPv6 扩展头遍历
 不可用，`ether multicast` 也不可靠，应使用 `ip multicast` 或

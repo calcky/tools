@@ -20,9 +20,10 @@ xpcap -i any -c 20 tcp and port 443
 xpcap -i eth0 -S xdp-entry,xdp-exit,redirect -q 3 -T 10
 xpcap -i eth0 -S pcap -ev -c 10 tcp
 xpcap -i eth0 -w trace.pcapng udp and port 9000
+xpcap -i eth0 -w trace.pcapng --print udp and port 9000
 ```
 
-`-i` is required and repeatable. `-i any` covers all interfaces and cannot be combined with another `-i`. `-w` writes PCAPNG alongside terminal output. Simple filter expressions can be passed without quotes; quote expressions containing shell metacharacters such as parentheses.
+`-i` is required and repeatable. `-i any` covers all interfaces and cannot be combined with another `-i`. `-w` writes PCAPNG without printing packets; add `--print` to also print them. Without `-w`, packets are printed by default. Simple filter expressions can be passed without quotes; quote expressions containing shell metacharacters such as parentheses.
 
 ## Common Options
 
@@ -32,6 +33,7 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 | `-Q in\|out\|inout` | Capture direction; default is both. `-Q out` excludes XDP entry, exit and redirect stages |
 | `-q QUEUE` | XDP/XSK queue filter; PCAP cannot report a queue |
 | `-c EVENTS` / `-T SECONDS` | Global event count / duration limit |
+| `--print` | With `-w`, also print packets; coverage and summary are always printed |
 | `-s BYTES` | Captured bytes per packet; default 2048, maximum 9216 |
 | `-m N` | Retain about one in N matching packets per stage |
 | `-B PAGES` | Perf buffer pages per CPU; default 256 |
@@ -40,10 +42,11 @@ xpcap -i eth0 -w trace.pcapng udp and port 9000
 
 Terminal output separates source (`PCAP`/`XSK`), direction (`IN`/`OUT`) and queue. XDP rows show `XDP-ENTRY` or `XDP-EXIT` without an additional `IN`; `xdp-exit` means program return, not NIC transmit. The protocol summary includes TCP flags, seq/ack, window and options. `-v/-e` affect terminal text only, not saved packet bytes. SLL cannot reconstruct a full source/destination MAC pair for `-i any`.
 
+`-w` always writes PCAPNG, regardless of filename extension; it does not produce classic PCAP.
+
 ## Filter Expressions
 
-Arguments after the options form one tcpdump-style filter expression. xpcap
-uses the `pktbaffle` classic-BPF subset. The available categories are:
+Arguments after the options form one tcpdump-style filter expression. xpcap uses the `pktbaffle` classic-BPF subset. The available categories are:
 
 ```text
 # Hosts and networks
@@ -99,10 +102,7 @@ xpcap -i eth0 'src net 192.0.2.0/24 and dst portrange 8000-9000'
 xpcap -i eth0 'vlan 100 and tcp[tcpflags] & tcp-syn != 0'
 ```
 
-TCP flag constants include `tcp-fin`, `tcp-syn`, `tcp-rst`, `tcp-push`,
-`tcp-ack`, `tcp-urg`, `tcp-ece`, and `tcp-cwr`; `tcpflags` is the flags
-offset. ICMP offsets include `icmptype`, `icmpcode`, `icmp6type`, and
-`icmp6code`.
+TCP flag constants include `tcp-fin`, `tcp-syn`, `tcp-rst`, `tcp-push`, `tcp-ack`, `tcp-urg`, `tcp-ece`, and `tcp-cwr`; `tcpflags` is the flags offset. ICMP offsets include `icmptype`, `icmpcode`, `icmp6type`, and `icmp6code`.
 
 This is not the complete libpcap grammar: `inbound`, `outbound`, and complex
 IPv6 extension-header traversal are unavailable. `ether multicast` is not

@@ -18,6 +18,8 @@ install -m 755 xpcap-linux-x86_64 "$HOME/.local/bin/xpcap"
 xpcap -i eth0
 xpcap -i any -c 20
 xpcap -i eth0 -i eth1 -w trace.pcapng
+xpcap -i eth0 -w trace.pcapng
+xpcap -i eth0 -w trace.pcapng --print
 xpcap -i eth0 -S xdp-exit,redirect,xsk-rx -q 3 -c 100
 xpcap -i eth0 udp and src net 192.0.2.0/24 and dst port 9000
 xpcap -i eth0 -S pcap -w conventional.pcapng
@@ -33,6 +35,8 @@ xpcap -i eth0 -S xsk,pcap -w combined.pcapng udp port 9000
 `-Q in|out|inout` applies a tcpdump-style direction filter (default `inout`). XDP entry, exit and redirect observe ingress processing; `xdp-exit` is the XDP program return point, **not** a transmit direction. `-Q out` therefore excludes these stages. XDP rows show the stage without a separate `IN` direction label. `-q/--queue` selects an XDP/XSK queue only; packet sockets cannot report a queue. `-c` limits the combined event count, `-T` limits seconds, `-s` sets output snaplen (default 2048, maximum 9216), and `-B/--perf-pages` sets perf-buffer pages per CPU (power of two, default 256). `-m/--sample N` retains about one in N matching observations (default 1): XDP/XSK sample in the probe before copying, while `pcap` samples after the packet socket has received the packet. Sampling is independent at each stage, so a packet need not appear at every stage. `sampled` in the summary counts intentional skips separately from perf lost and output errors. Ctrl+C prints the summary.
 
 `-v` adds IPv4 TOS, TTL, ID, fragment offset/flags, protocol, IP length and header checksum; for IPv6 it adds traffic class, flow label, hop limit, next header and payload length. The checksum is the captured field value, not a validation result; transmit offload can leave it unset. `-e` adds source/destination MAC, EtherType, VLAN ID and priority where an Ethernet header is present. With `-i any`, PCAP uses Linux cooked SLL: `-e` shows packet type and the available link address, not a fabricated source/destination MAC pair. Both flags affect terminal output only; `-w` keeps the original captured bytes.
+
+With `-w`, packets are written without per-packet terminal formatting or output. Add `--print` to also print packets. Without `-w`, packets are printed as usual. Startup coverage, warnings, and the final capture summary remain visible in either mode. `-w` always writes PCAPNG, regardless of filename extension; renaming the file to `.pcap` does not convert it to classic PCAP.
 
 A trailing tcpdump-style filter expression is the only packet-content filter. Simple expressions do not need quotes; use shell quotes around parentheses, `!`, `&&`, `||`, or other shell metacharacters. The supported vocabulary is listed below. It is a libpcap-style subset, not every tcpdump extension.
 

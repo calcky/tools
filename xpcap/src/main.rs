@@ -57,8 +57,10 @@ struct Args {
         help = "Interface (repeatable), or any for all interfaces"
     )]
     interfaces: Vec<String>,
-    #[arg(short = 'w', value_name = "FILE", help = "Also write PCAPNG to FILE")]
+    #[arg(short = 'w', value_name = "FILE", help = "Write PCAPNG to FILE")]
     write: Option<PathBuf>,
+    #[arg(long, requires = "write", help = "Also print packets when using -w")]
+    print: bool,
     #[arg(
         short = 'v',
         help = "Show IP header details (TTL, ID, flags, checksum)"
@@ -105,6 +107,12 @@ struct Args {
         help = "Tcpdump-style packet filter"
     )]
     filter: Vec<String>,
+}
+
+impl Args {
+    fn prints_packets(&self) -> bool {
+        self.write.is_none() || self.print
+    }
 }
 
 fn selection(args: &Args) -> Result<Selection> {
@@ -644,6 +652,7 @@ fn format_capture_line(
 struct CaptureState {
     names: HashMap<u32, String>,
     show_interface: bool,
+    print_packets: bool,
     print_options: PrintOptions,
     map_types: HashMap<u32, String>,
     writer: Option<PcapngWriter<BufWriter<File>>>,
@@ -696,17 +705,19 @@ impl CaptureState {
         } else {
             ""
         };
-        println!(
-            "{}",
-            format_capture_line(
-                &self.names,
-                self.show_interface,
-                self.print_options,
-                &event,
-                wall,
-                extra,
-            )
-        );
+        if self.print_packets {
+            println!(
+                "{}",
+                format_capture_line(
+                    &self.names,
+                    self.show_interface,
+                    self.print_options,
+                    &event,
+                    wall,
+                    extra,
+                )
+            );
+        }
         if let Some(writer) = &mut self.writer {
             if event.flags & xpcap::event::FLAG_COOKED == 0 {
                 let name = &self.names[&event.ifindex];
@@ -774,6 +785,7 @@ fn main() -> Result<()> {
     let state = Rc::new(RefCell::new(CaptureState {
         names,
         show_interface: any || args.interfaces.len() > 1,
+        print_packets: args.prints_packets(),
         print_options: PrintOptions {
             verbose: args.verbose,
             link_header: args.link_header,
@@ -1238,6 +1250,20 @@ mod tests {
         assert!(Args::try_parse_from(["xpcap", "-i", "lo", "-s", "9217"]).is_err());
         assert!(Args::try_parse_from(["xpcap", "-i", "lo", "--sample", "0"]).is_err());
         assert!(Args::try_parse_from(["xpcap", "-i", "lo", "--src", "192.0.2.1"]).is_err());
+        assert!(Args::try_parse_from(["xpcap", "-i", "lo", "--print"]).is_err());
+    }
+
+    #[test]
+    fn packet_printing_defaults_to_terminal_or_file_only() {
+        let terminal = Args::try_parse_from(["xpcap", "-i", "lo"]).unwrap();
+        assert!(terminal.prints_packets());
+
+        let file = Args::try_parse_from(["xpcap", "-i", "lo", "-w", "trace.pcapng"]).unwrap();
+        assert!(!file.prints_packets());
+
+        let both =
+            Args::try_parse_from(["xpcap", "-i", "lo", "-w", "trace.pcapng", "--print"]).unwrap();
+        assert!(both.prints_packets());
     }
 
     #[test]
@@ -1256,6 +1282,7 @@ mod tests {
             "-q, --queue",
             "-m, --sample",
             "-B, --perf-pages",
+            "--print",
             "-v",
             "-e",
             "xdp-entry,xdp-exit",
