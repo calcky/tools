@@ -73,6 +73,8 @@ plugins:
             路由与连接跟踪: Routing And Conntrack
             指标与数据状态: Metrics And Data Status
             数据包路径: Packet Paths
+            网络栈时延: Network Stack Latency
+            观测钩子: Observation Hooks
   - search:
       lang: [en, zh]
 
@@ -130,5 +132,8 @@ nav:
           - 数据包路径: netlens/docs/packet-path.md
       - netping: netping/README.md
       - nettrace: nettrace/README.md
+      - skbtop:
+          - 网络栈时延: skbtop/README.md
+          - 观测钩子: skbtop/hooks.md
       - xpcap: xpcap/README.md
       - xsktop: xsktop/README.md

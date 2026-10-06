@@ -1,0 +1,11 @@
+[build.env]
+passthrough = ["SKBTOP_BPF_OBJECT", "LIBBPF_SYS_LIBRARY_PATH", "LIBBPF_SYS_EXTRA_CFLAGS"]
+
+[target.armv7-unknown-linux-musleabihf]
+dockerfile = "ci/Dockerfile.arm"
+
+[target.aarch64-unknown-linux-musl]
+dockerfile = "ci/Dockerfile.arm64"
+
+[target.x86_64-unknown-linux-musl]
+dockerfile = "ci/Dockerfile.x86_64"

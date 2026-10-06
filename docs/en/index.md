@@ -21,6 +21,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netlens](netlens/README.md) | Interfaces, sockets, qdisc, routes and layered network health | [Release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | [netping](netping/README.md) | ICMP, UDP and TCP latency, plus MTU/MSS inspection | [Release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | [nettrace](nettrace/README.md) | Kernel skb paths, packet-drop diagnosis and processing latency | [Release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
+| [skbtop](skbtop/README.md) | IPv4/IPv6 INPUT, OUTPUT and routed/NAT or bridged forwarding skb stack, egress queue and total latency by interface and directed pair | No prebuilt release yet |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages | [Release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | [xsktop](xsktop/README.md) | AF_XDP socket rates, errors and process ownership | [Release](https://github.com/calcky/tools/releases/tag/xsktop-release) |
 

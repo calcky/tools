@@ -1,0 +1,26 @@
+version: 1
+name: skbtop-bridge
+
+topology:
+  nodes:
+    h1:
+      kind: linux
+      interfaces:
+        eth0:
+          addresses: [192.0.2.2/24, "2001:db8:3::2/64"]
+    sw1:
+      kind: bridge
+      bridge:
+        name: br0
+        stp: false
+        vlan_filtering: false
+    h2:
+      kind: linux
+      interfaces:
+        eth0:
+          addresses: [192.0.2.3/24, "2001:db8:3::3/64"]
+  links:
+    - endpoints: [h1:eth0, sw1:swp1]
+      mtu: 1500
+    - endpoints: [h2:eth0, sw1:swp2]
+      mtu: 1500

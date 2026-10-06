@@ -247,3 +247,25 @@ check-cachetop:
 install-cachetop:
 	test -x bin/cachetop
 	install -D -m 755 bin/cachetop "$(DESTDIR)$(BINDIR)/cachetop"
+
+SKBTOP_TARGET_DIR ?= skbtop/target
+SKBTOP_LIB_DIR ?= $(shell pkg-config --variable=libdir libelf)
+
+.PHONY: skbtop check-skbtop install-skbtop
+
+all: skbtop
+check: check-skbtop
+install: install-skbtop
+
+skbtop:
+	LIBBPF_SYS_LIBRARY_PATH="$(SKBTOP_LIB_DIR)" $(CARGO) build --manifest-path skbtop/Cargo.toml --release $(CARGO_FLAGS) --target-dir "$(abspath $(SKBTOP_TARGET_DIR))"
+	install -D -m 755 "$(SKBTOP_TARGET_DIR)/release/skbtop" bin/skbtop
+
+check-skbtop:
+	$(CARGO) fmt --manifest-path skbtop/Cargo.toml -- --check
+	LIBBPF_SYS_LIBRARY_PATH="$(SKBTOP_LIB_DIR)" $(CARGO) test --manifest-path skbtop/Cargo.toml $(CARGO_FLAGS) --target-dir "$(abspath $(SKBTOP_TARGET_DIR))"
+	LIBBPF_SYS_LIBRARY_PATH="$(SKBTOP_LIB_DIR)" $(CARGO) clippy --manifest-path skbtop/Cargo.toml $(CARGO_FLAGS) --all-targets --target-dir "$(abspath $(SKBTOP_TARGET_DIR))" -- -D warnings
+
+install-skbtop:
+	test -x bin/skbtop
+	install -D -m 755 bin/skbtop "$(DESTDIR)$(BINDIR)/skbtop"

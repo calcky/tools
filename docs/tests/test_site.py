@@ -22,7 +22,7 @@ NETLENS_REFERENCE = (
     "netlens/docs/monitor-metrics",
     "netlens/docs/packet-path",
 )
-ROUTES = ("", "getting-started", *TOOLS, *NETLENS_REFERENCE, "bpfmap", "fdtop", "napitop")
+ROUTES = ("", "getting-started", *TOOLS, *NETLENS_REFERENCE, "bpfmap", "fdtop", "napitop", "skbtop", "skbtop/hooks")
 
 
 class Document(HTMLParser):
