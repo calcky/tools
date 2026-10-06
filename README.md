@@ -23,7 +23,7 @@ Linux 调试、监控与测试工具集，各工具独立运行。
 | [netlens](netlens/README.md) | 分层查看网口、socket、qdisc、路由及网络栈计数 | [Release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | [netping](netping/README.md) | ICMP、UDP、TCP 延迟与丢失检测，MTU/MSS 探测 | [Release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | [nettrace](nettrace/README.md) | 内核 skb 路径跟踪、丢包诊断与处理延迟分析 | [Release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
-| [skbtop](skbtop/README.md) | 按接口与有向接口对查看 IPv4/IPv6 INPUT、OUTPUT、路由/NAT 与桥转发的 skb 栈处理、出口排队和总时延 | 尚未发布预编译程序 |
+| [skbtop](skbtop/README.md) | 按接口与有向接口对查看 IPv4/IPv6 INPUT、OUTPUT、路由/NAT 与桥转发的 skb 栈处理、出口排队和总时延 | [Release](https://github.com/calcky/tools/releases/tag/skbtop-release) |
 | [systop](systop/README.md) | eBPF 实时统计系统调用、进程与线程调用速率 | [Release](https://github.com/calcky/tools/releases/tag/systop-release) |
 | [xpcap](xpcap/README.md) | 同时抓取 AF_XDP 与常规网口流量，支持 XDP 阶段和 PCAPNG | [Release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | [xsktop](xsktop/README.md) | 实时查看 AF_XDP socket 的队列流量、错误和进程归属 | [Release](https://github.com/calcky/tools/releases/tag/xsktop-release) |

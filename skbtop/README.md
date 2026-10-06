@@ -11,10 +11,17 @@ User documentation: [中文](../docs/zh/skbtop/README.md) |
 
 ## Installation
 
-No skbtop GitHub Release or prebuilt assets have been published yet.
-The static workflow targets ARMv7 hard-float, ARM64 and x86_64. Its only
-publishing gate is the canonical `skbtop-release` tag; branch, PR and
-manual runs build artifacts without publishing a Release.
+The canonical [skbtop-release](https://github.com/calcky/tools/releases/tag/skbtop-release)
+contains static musl executables for ARMv7 hard-float, ARM64 and x86_64,
+along with `SHA256SUMS`. Install the x86_64 executable as `skbtop`:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+curl -fL https://github.com/calcky/tools/releases/download/skbtop-release/skbtop-linux-x86_64 -o skbtop
+install -m 755 skbtop "$HOME/.local/bin/skbtop"
+```
+
+Add `$HOME/.local/bin` to `PATH`.
 
 For a local source build, use Rust 1.96 (the release workflow version), a C toolchain, clang
 with the BPF target, libbpf headers, libelf, zlib, zstd and pkg-config

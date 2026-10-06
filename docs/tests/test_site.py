@@ -190,7 +190,7 @@ class BilingualSite(unittest.TestCase):
 
     def test_download_links_are_canonical(self):
         for _, route, _, doc in self.pages():
-            if route in TOOLS:
+            if route in (*TOOLS, "skbtop"):
                 expected = f"https://github.com/calcky/tools/releases/tag/{route}-release"
                 self.assertIn(expected, [link["href"] for link in doc.links])
             for link in doc.links:
@@ -198,7 +198,7 @@ class BilingualSite(unittest.TestCase):
 
     def test_tool_pages_use_installation_and_bare_commands(self):
         for locale in ("zh", "en"):
-            for tool in TOOLS:
+            for tool in (*TOOLS, "skbtop"):
                 with self.subTest(locale=locale, tool=tool):
                     text = (ROOT / "docs" / locale / tool / "README.md").read_text(encoding="utf-8")
                     heading = "## 安装" if locale == "zh" else "## Installation"
@@ -221,7 +221,7 @@ class BilingualSite(unittest.TestCase):
 
     def test_search_has_both_languages(self):
         data = json.loads((SITE / "search/search_index.json").read_text(encoding="utf-8"))
-        for route in (*TOOLS, *NETLENS_REFERENCE):
+        for route in (*TOOLS, *NETLENS_REFERENCE, "skbtop", "skbtop/hooks"):
             for prefix in ("", "en/"):
                 self.assertTrue(any(row["location"].split("#")[0] == f"{prefix}{route}/" for row in data["docs"]), (prefix, route))
         chinese = next(row["text"] for row in data["docs"] if row["location"] == "irqtop/")

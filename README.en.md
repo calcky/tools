@@ -23,7 +23,7 @@ Small, standalone Linux debugging, monitoring and testing tools.
 | [netlens](netlens/README.md) | Interfaces, sockets, qdisc, routes and layered network counters | [Release](https://github.com/calcky/tools/releases/tag/netlens-release) |
 | [netping](netping/README.md) | ICMP, UDP and TCP latency/failure checks, plus MTU/MSS inspection | [Release](https://github.com/calcky/tools/releases/tag/netping-release) |
 | [nettrace](nettrace/README.md) | Kernel skb path tracing, packet-drop diagnosis and processing latency | [Release](https://github.com/calcky/tools/releases/tag/nettrace-release) |
-| [skbtop](skbtop/README.md) | IPv4/IPv6 INPUT, OUTPUT and routed/NAT or bridged forwarding skb stack, egress queue and total latency by interface and directed pair | No prebuilt release yet |
+| [skbtop](skbtop/README.md) | IPv4/IPv6 INPUT, OUTPUT and routed/NAT or bridged forwarding skb stack, egress queue and total latency by interface and directed pair | [Release](https://github.com/calcky/tools/releases/tag/skbtop-release) |
 | [systop](systop/README.md) | eBPF syscall, process and thread call-rate top | [Release](https://github.com/calcky/tools/releases/tag/systop-release) |
 | [xpcap](xpcap/README.md) | Capture AF_XDP and conventional traffic together, with optional XDP stages and PCAPNG output | [Release](https://github.com/calcky/tools/releases/tag/xpcap-release) |
 | [xsktop](xsktop/README.md) | Live AF_XDP socket rates, errors and process ownership | [Release](https://github.com/calcky/tools/releases/tag/xsktop-release) |

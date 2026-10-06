@@ -4,7 +4,15 @@
 
 ## Installation
 
-No public Release or prebuilt skbtop assets have been published yet. The static build workflow targets ARMv7 hard-float, ARM64 and x86_64; this is not a list of available downloads. See the [repository manual](https://github.com/calcky/tools/blob/master/skbtop/README.md) for development installation. An installed executable uses the name `skbtop` on `PATH`.
+Install the x86_64 static executable from [skbtop-release](https://github.com/calcky/tools/releases/tag/skbtop-release):
+
+```sh
+mkdir -p "$HOME/.local/bin"
+curl -fL https://github.com/calcky/tools/releases/download/skbtop-release/skbtop-linux-x86_64 -o skbtop
+install -m 755 skbtop "$HOME/.local/bin/skbtop"
+```
+
+Add `$HOME/.local/bin` to `PATH`. The same Release also provides ARMv7 hard-float and ARM64 executables and `SHA256SUMS`. Install with the unsuffixed name `skbtop`.
 
 Tracing requires root and a kernel with the required BPF permissions, BTF and tracing hooks. Run in the network namespace you want to observe. Static userspace linkage does not provide missing kernel support.
 

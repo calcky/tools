@@ -4,7 +4,15 @@
 
 ## 安装
 
-目前尚未发布公开 Release 或 skbtop 预编译附件。静态构建 workflow 面向 ARMv7 hard-float、ARM64 与 x86_64，这不表示已有可下载产物。开发安装见[仓库手册](https://github.com/calcky/tools/blob/master/skbtop/README.md)。安装后的程序在 `PATH` 上使用不带架构后缀的名称 `skbtop`。
+从 [skbtop-release](https://github.com/calcky/tools/releases/tag/skbtop-release) 安装 x86_64 静态程序：
+
+```sh
+mkdir -p "$HOME/.local/bin"
+curl -fL https://github.com/calcky/tools/releases/download/skbtop-release/skbtop-linux-x86_64 -o skbtop
+install -m 755 skbtop "$HOME/.local/bin/skbtop"
+```
+
+将 `$HOME/.local/bin` 加入 `PATH`。同一 Release 还提供 ARMv7 hard-float、ARM64 程序和 `SHA256SUMS`，安装时使用不带架构后缀的名称 `skbtop`。
 
 跟踪需要 root，以及内核允许 BPF 操作、提供 BTF 和所需跟踪 hook。在需要观测的网络命名空间内运行；静态链接用户态程序不会补齐内核缺失的能力。
 
