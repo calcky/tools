@@ -42,7 +42,7 @@ fn metadata() -> Metadata {
             "latency": "Min/max and sum_ns are collector measurements. Newest uses the latest completed sample's monotonic observation timestamp, not map read order; unknown or incomplete newest updates remain null. Percentiles are histogram estimates; merged percentiles come from cumulative histogram counts, never averages of percentiles.",
             "identity": "kind, network namespace, ingress/egress interface indices and generations; FORWARD pairs group both directions without merging their measurements.",
             "histogram": "Collector bucket counts in original index order. Empty stages have no latency measurements.",
-            "stages": "INPUT: raw_tp/netif_receive_skb inside RX core to fentry/ip_protocol_deliver_rcu or fentry/ip6_protocol_deliver_rcu. OUTPUT starts at fentry/__ip_local_out or fentry/__ip6_local_out; FORWARD starts at the RX core hook. STACK ends at raw_tp/net_dev_queue, QUEUE ends at raw_tp/net_dev_start_xmit for the attempt confirmed by raw_tp/net_dev_xmit with NETDEV_TX_OK; TOTAL independently spans start to that attempt entry. INPUT has STACK=TOTAL and no QUEUE. Elapsed time includes retries/queued work, not CPU time, application response time or NIC wire time.",
+            "stages": "INPUT records only STACK: tp_btf/netif_receive_skb inside __netif_receive_skb_core to fentry/ip_protocol_deliver_rcu or fentry/ip6_protocol_deliver_rcu; QUEUE and TOTAL slots are empty. OUTPUT starts at fentry/__ip_local_out or fentry/__ip6_local_out; FORWARD starts at the RX core hook. STACK ends and QUEUE starts at tp_btf/net_dev_queue, triggered by trace_net_dev_queue(skb) in __dev_queue_xmit before qdisc processing. QUEUE ends at tp_btf/net_dev_start_xmit in xmit_one for the attempt confirmed by tp_btf/net_dev_xmit with NETDEV_TX_OK; TOTAL independently spans start to that attempt entry. Elapsed time includes retries/queued work, not CPU time, application response time or NIC wire time.",
             "chart_data": "Uniformly sampled Snapshot projections retain original timestamps, keys, rates and interval latency metrics; full snapshots remain in snapshots.jsonl. All path summaries are retained. Browser interface generations and integers beyond 2^53-1 are decimal strings to preserve identity and counts.",
             "reconciliation": "Sum actual interval_secs, including first/last partial intervals. Compare each path's summed interval counters, samples, sum_ns and histogram counts with its latest cumulative row. Differences can indicate earlier unrecorded history, live collection boundaries, gaps or collector health errors; cumulative rows remain authoritative."
         }),
@@ -1012,8 +1012,20 @@ mod tests {
                 out_bytes: packets * 128,
                 ..Counters::default()
             },
-            latency: std::array::from_fn(|_| measured.clone()),
-            total_latency: std::array::from_fn(|_| measured.clone()),
+            latency: std::array::from_fn(|stage| {
+                if kind.latency_stages().contains(&stage) {
+                    measured.clone()
+                } else {
+                    Latency::default()
+                }
+            }),
+            total_latency: std::array::from_fn(|stage| {
+                if kind.latency_stages().contains(&stage) {
+                    measured.clone()
+                } else {
+                    Latency::default()
+                }
+            }),
             pending: 0,
             pps: rate,
             bps: rate * 1024.0,
@@ -1427,6 +1439,26 @@ mod tests {
         assert!(data["snapshots"][0]["rows"][0]["latency"][0]
             .get("histogram")
             .is_none());
+    }
+
+    #[test]
+    fn input_summary_retains_only_stack_samples() {
+        let input = row(Kind::Input, 1, 0, 3, 3.0, &[(1000, 3)]);
+        let mut builder = SummaryBuilder::default();
+        builder.observe(&snapshot(1, vec![input])).unwrap();
+        let summary = builder.finish(vec![]).unwrap();
+        for stages in [
+            &summary.paths[0].row.total_latency,
+            summary.kinds[0].total_latency.as_ref().unwrap(),
+        ] {
+            assert_eq!(stages[0].samples, 3);
+            for latency in &stages[1..] {
+                assert_eq!(latency.samples, 0);
+                assert_eq!(latency.sum_ns, 0);
+                assert!(latency.histogram.iter().all(|count| *count == 0));
+                assert_eq!(latency.avg_us, None);
+            }
+        }
     }
 
     #[test]

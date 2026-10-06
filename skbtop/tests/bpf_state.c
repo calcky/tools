@@ -529,7 +529,7 @@ static void receive_input(void) {
         EQ(counted(s, 2), 1); EQ(counted(s, 3), 60);
         latency(&s->stages[0], 1, 20, 20, 20);
         latency(&s->stages[1], 0, 0, 0, 0);
-        latency(&s->stages[2], 1, 20, 20, 20);
+        latency(&s->stages[2], 0, 0, 0, 0);
         EQ(global_stats()->counts[2], 1);
         EQ(global_stats()->counts[3], 60);
         EQ(on_free(&skb), 0);
@@ -558,12 +558,43 @@ static void input_namespace_isolation(void) {
         else EQ(on_input4(&ns, &skb), 0);
         struct stats *s = statistics(path_key(1, &ingress, NULL));
         EQ(counted(s, 0), 1); EQ(counted(s, 2), 1);
-        latency(&s->stages[2], 1, 30, 30, 30);
+        latency(&s->stages[0], 1, 30, 30, 30);
         clock_ns = 140;
         EQ(on_input4(&other_ns, &skb), 0);
         EQ(on_input6(&other_ns, &skb), 0);
         EQ(counted(s, 2), 1); EQ(global_stats()->counts[2], 1);
         EQ(on_free(&skb), 0); no_tracking(); no_errors();
+    }
+}
+
+static void input_stack_only_in_interval_and_fallback(void) {
+    for (int fallback = 0; fallback < 3; fallback++) {
+        for (int ipv6 = 0; ipv6 < 2; ipv6++) {
+            reset();
+            if (fallback == 1) configuration()->interval_ns = 0;
+            if (fallback == 2) mock_map_for(&interval_latency)->capacity = 0;
+            struct sk_buff skb = { .dev = &ingress, .len = 64 };
+            receive_at(&skb, 100);
+            cpu = 2;
+            clock_ns = 220;
+            if (ipv6) EQ(on_input6(&ns, &skb), 0);
+            else EQ(on_input4(&ns, &skb), 0);
+            struct path path = path_key(1, &ingress, NULL);
+            struct stats *s = statistics(path);
+            latency(&s->stages[0], 1, 120, 120, 120);
+            for (int stage = 1; stage < 3; stage++) {
+                latency(&s->stages[stage], 0, 0, 0, 0);
+                struct latency empty = combined_latency(&s->stages[stage]);
+                EQ(empty.newest_at, 0); EQ(empty.newest_ns, 0);
+                latency_period(path, 1, stage, 0, 0, 0, 0);
+            }
+            latency_period(path, 1, 0, !fallback, fallback ? 0 : 120,
+                           fallback ? 0 : 120, fallback ? 0 : 120);
+            EQ(s->stages[0].samples, !!fallback);
+            EQ(on_release(&skb), 0); no_tracking();
+            for (__u32 i = 0; i < ERROR_SLOTS; i++)
+                EQ(error_count(i), fallback == 2 && i == 2 ? 1 : 0);
+        }
     }
 }
 
@@ -1001,7 +1032,7 @@ static void bridge_cb_receive_is_not_forwarding(void) {
         EQ(counted(s, 0), 1); EQ(counted(s, 2), 1);
         EQ(counted(s, 4) + counted(s, 5) + counted(s, 6), 0);
         EQ(global_stats()->counts[4] + global_stats()->counts[5] + global_stats()->counts[6], 0);
-        latency(&s->stages[2], 1, 20, 20, 20);
+        latency(&s->stages[0], 1, 20, 20, 20);
         EQ(on_release(&skb), 0); no_tracking(); no_errors();
     }
 }
@@ -1056,7 +1087,7 @@ static void bridge_receive_survives_overwritten_cb(void) {
             EQ(counted(s, 0), 1); EQ(counted(s, 2), 1);
             EQ(counted(s, 4) + counted(s, 5) + counted(s, 6), 0);
             EQ(global_stats()->counts[5], 0);
-            latency(&s->stages[2], 1, 40, 40, 40);
+            latency(&s->stages[0], 1, 40, 40, 40);
             EQ(on_release(&source), 0);
         } else {
             struct sk_buff copy = source;
@@ -2062,8 +2093,9 @@ static void zero_min_and_histogram(void) {
     EQ(on_input6(&ns, &second), 0); EQ(on_free(&second), 0);
     struct stats *s = statistics(path_key(1, &ingress, NULL));
     latency(&s->stages[0], 2, 10, 0, 10);
-    latency(&s->stages[2], 2, 10, 0, 10);
-    struct latency combined = combined_latency(&s->stages[2]);
+    latency(&s->stages[1], 0, 0, 0, 0);
+    latency(&s->stages[2], 0, 0, 0, 0);
+    struct latency combined = combined_latency(&s->stages[0]);
     EQ(combined.bins[0], 1); EQ(combined.bins[13], 1);
     struct { __u64 ns; __u32 bin; } cases[] = {
         {0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 8}, {7, 11}, {8, 12}, {15, 15},
@@ -2163,8 +2195,8 @@ static void hook_entry_timestamps(void) {
     lookup_cost_ns = 0;
     struct path key = path_key(1, &ingress, NULL);
     /* The wrapper's namespace lookup precedes deliver's entry timestamp. */
-    latency(&statistics(key)->stages[2], 1, 100, 100, 100);
-    latency_period(key, 1, 2, 1, 100, 100, 100);
+    latency(&statistics(key)->stages[0], 1, 100, 100, 100);
+    latency_period(key, 1, 0, 1, 100, 100, 100);
     EQ(mock_map_for(&periods)->count, 1);
     EQ(on_free(&skb), 0); no_tracking(); no_errors();
 }
@@ -2472,6 +2504,7 @@ int main(void) {
         {"cached GSO parent respects concurrent retirement", segmented_cached_parent_respects_retirement},
         {"newest completion ordering, bounded contention and zero duration", newest_completion_order_and_contention},
         {"receive and IPv4/IPv6 INPUT", receive_input},
+        {"INPUT Stack only across CPU/interval and capacity fallback", input_stack_only_in_interval_and_fallback},
         {"receive deduplication preserves full-capacity accounting", receive_deduplication_at_capacity},
         {"one skb retains separate simultaneous egress lifetimes", simultaneous_egress_generations},
         {"foreign namespace delivery cannot count as INPUT", input_namespace_isolation},

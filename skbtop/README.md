@@ -1,6 +1,6 @@
 # skbtop
 
-`skbtop` v0.1.0 measures observed Linux skb path latency for IPv4/IPv6 local
+`skbtop` v0.1.1 measures observed Linux skb path latency for IPv4/IPv6 local
 INPUT, local OUTPUT and route/NAT or bridge forwarding. It splits elapsed
 latency into stack processing, egress queue and total, with rates and latency
 distributions for each interface or directed interface pair.
@@ -73,7 +73,7 @@ skbtop -v
 | `-g N` | Directed path map capacity; default `4096`, not a grouping mode. |
 | `-o DIR` | Record interval JSONL, `summary.json` and standalone `report.html`. |
 | `-h` | Help. |
-| `-v` | Version: `skbtop 0.1.0`. |
+| `-v` | Version: `skbtop 0.1.1`. |
 
 Interface discovery remains active throughout capture. New, removed and
 renamed devices and reused ifindices are tracked as interface lifecycles;
@@ -123,19 +123,27 @@ For `eth0 -> eth1`, both describe that direction; `eth1 -> eth0` is a separate r
 Latency headers have two levels, with all values in microseconds (`us`):
 
 ```text
+INPUT
+   Avg  |   Min  |   Max  | Newest
+    S   |    S   |    S   |    S
+
+OUTPUT / FORWARD
        Avg       |       Min       |       Max       |      Newest
   S    Q    T    |  S    Q    T    |  S    Q    T    |  S    Q    T
 ```
 
-`S = Stack`, `Q = Queue`, `T = Total`. INPUT has no Queue, so Q displays `-`;
-its Stack and Total measure the same span. Total is measured independently;
+`S = Stack`, `Q = Queue`, `T = Total`. INPUT records and displays only S;
+OUTPUT and FORWARD retain S/Q/T. Total is measured independently;
 stage minima or maxima must not be added to infer Total minima or maxima.
 Click the lower S/Q/T header to sort by that specific stage and statistic.
 The footer spells out the selected metric, such as `Queue max`.
+When another section selects Queue or Total sorting, INPUT uses the
+corresponding Stack metric and its S header shows the sort arrow.
 
-From 120 columns, all four latency groups show S/Q/T. Below 120 columns,
-they show only T while keeping OUT rates and wider path labels; details and
-text snapshots retain every stage. From 160 columns, IN rates and PEND also
+INPUT always has one S column under each Avg/Min/Max/Newest group.
+OUTPUT and FORWARD show S/Q/T from 120 columns; below that width,
+they show only T. Details and text snapshots retain each path's applicable
+stages. From 160 columns, IN rates and PEND also
 appear, with bandwidth and PPS columns adjacent to their counterparts.
 Vertical lines separate columns; each group title spans its three stage columns.
 Large latency values use scientific notation when needed, still in us.
@@ -174,7 +182,10 @@ headers, so differing ingress/egress byte counts do not establish loss.
 | OUTPUT | `fentry/__ip_local_out` (IPv4) or `fentry/__ip6_local_out` (IPv6) | `tp_btf/net_dev_start_xmit` for an attempt later confirmed successful |
 | FORWARD | `tp_btf/netif_receive_skb` inside RX core through route/NAT or bridge forwarding | `tp_btf/net_dev_start_xmit` for an attempt later confirmed successful |
 
-`tp_btf/net_dev_queue` divides STACK and QUEUE. `tp_btf/net_dev_xmit`
+`tp_btf/net_dev_queue` divides STACK and QUEUE: `__dev_queue_xmit()` triggers
+`trace_net_dev_queue(skb)` after egress netfilter/TC, before qdisc processing;
+the BPF handler is `on_queue()` -> `enqueue()`. `xmit_one()` triggers the
+driver start/result tracepoints. `tp_btf/net_dev_xmit`
 confirms the attempt with `NETDEV_TX_OK`; its return timestamp is not the
 latency endpoint. Route classifiers are `fentry/ip_forward` and
 `fentry/ip6_forward`; bridge classifiers use the `br_*` hooks.
@@ -203,6 +214,10 @@ statistics describe skb paths, not connection RTTs.
 
 ## Recording and coverage
 
+INPUT tables, details and HTML charts use only Stack. JSON latency arrays
+retain the Stack/Queue/Total order; INPUT's Queue/Total slots have zero samples
+and empty distributions.
+
 The recorder retains interval snapshots in `snapshots.jsonl` and cumulative
 path and interface statistics in `summary.json`. `report.html` is a standalone offline
 report without external runtime assets and includes every captured directed
@@ -221,7 +236,8 @@ Clones and GSO segmentation support identity propagation within the bounded
 tracking capacity. skb counts need not equal wire-packet counts.
 
 Normal traffic counters use compact 64-byte per-CPU interval records. Each
-completion updates S/Q/T together in one per-CPU latency record. Userspace
+completion updates the applicable stages (INPUT: S; others: S/Q/T) in one
+per-CPU latency record. Userspace
 merges CPU shards, safely retired intervals and the current open interval for
 lifetime counters and distributions, without averaging percentiles. This
 avoids duplicate lifetime traffic writes and reduces shared-counter contention.

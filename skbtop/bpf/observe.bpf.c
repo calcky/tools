@@ -324,8 +324,10 @@ static __always_inline void timings_resolved(struct stats *s, struct traffic *p,
     // Normal completions update one interval distribution. Paths retain only
     // overflow samples, so period capacity failures do not lose lifetime data.
     struct interval_timings *l = p ? period_timings(path, write->epoch) : 0;
-    if (l) duration_interval(&l->stages[2], end - start, now);
-    else duration(s, 2, end - start, now);
+    if (path->kind != 1) {
+        if (l) duration_interval(&l->stages[2], end - start, now);
+        else duration(s, 2, end - start, now);
+    }
     if (queue) {
         if (l) {
             duration_interval(&l->stages[0], queue - start, now);

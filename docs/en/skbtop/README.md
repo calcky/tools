@@ -1,6 +1,6 @@
 # skbtop
 
-`skbtop` v0.1.0 measures observed Linux skb path latency for IPv4/IPv6 local INPUT, local OUTPUT and routed/NAT or bridged forwarding. It separates stack processing, egress queue and total latency between the stated observation points, by interface and directed interface pair.
+`skbtop` v0.1.1 measures observed Linux skb path latency for IPv4/IPv6 local INPUT, local OUTPUT and routed/NAT or bridged forwarding. It separates stack processing, egress queue and total latency between the stated observation points, by interface and directed interface pair.
 
 ## Installation
 
@@ -49,7 +49,7 @@ skbtop [-i IFACE] [-d SEC] [-c N] [-T SEC] [-m N] [-g N] [-o DIR] [-h/-v]
 | `-g N` | Maximum number of directed paths; default `4096`. This is a capacity, not a grouping mode. |
 | `-o DIR` | Record interval JSONL, `summary.json` and a standalone `report.html` in DIR. |
 | `-h` | Show help. |
-| `-v` | Show version (`skbtop 0.1.0`). |
+| `-v` | Show version (`skbtop 0.1.1`). |
 
 ## Read the live view
 
@@ -73,13 +73,18 @@ IN and OUT describe the start and end of the **same directed path**. Both rates 
 Latency headers have two levels, with all values in microseconds (`us`):
 
 ```text
+INPUT
+   Avg  |   Min  |   Max  | Newest
+    S   |    S   |    S   |    S
+
+OUTPUT / FORWARD
        Avg       |       Min       |       Max       |      Newest
   S    Q    T    |  S    Q    T    |  S    Q    T    |  S    Q    T
 ```
 
-`S = Stack`, `Q = Queue`, `T = Total`. INPUT has no Queue, so Q displays `-`; its Stack and Total measure the same span. Total is measured independently; stage minima or maxima must not be added to infer Total minima or maxima. Click a lower S/Q/T header to sort by that stage and statistic. The footer spells out the metric, such as `Queue max`.
+`S = Stack`, `Q = Queue`, `T = Total`. INPUT records and displays only S, with no Q/T measurements; OUTPUT and FORWARD retain S/Q/T. Total is measured independently; stage minima or maxima must not be added to infer Total minima or maxima. Click a lower stage initial to sort by that stage and statistic. The footer spells out the metric, such as `Queue max`. When another section selects Queue or Total sorting, INPUT uses the corresponding Stack metric and its S header shows the sort arrow.
 
-From 120 columns, all four latency groups show S/Q/T. Below 120 columns, they show only T while retaining OUT rates and wider path labels; other stages remain in details. From 160 columns, IN rates and PEND also appear, with bandwidth and PPS columns adjacent to their counterparts. Vertical lines separate columns; group titles span their three stage columns. Large latency values use scientific notation when needed, still in us. Text snapshots always show every stage and both IN/OUT rates.
+INPUT always has one S column under each Avg/Min/Max/Newest group. OUTPUT and FORWARD show S/Q/T from 120 columns; below that width they show T, with other stages in details. From 160 columns, IN rates and PEND also appear, with bandwidth and PPS columns adjacent to their counterparts. Vertical lines separate columns; group titles span their applicable stage columns. Large latency values use scientific notation when needed, still in us. Text snapshots show the applicable stages and both IN/OUT rates.
 
 Each rate and latency column highlights its maximum, while Min highlights the smallest minimum. Default sorting uses OUT bandwidth descending. FORWARD directions remain adjacent for every sort: IN/OUT rates and PEND use the pair sum, Min uses the smaller minimum, other latency columns use the larger value of the two directions, and groups with no latency samples stay last in either order.
 
@@ -87,7 +92,7 @@ Path IN counters are booked at local delivery or the first egress queue, once th
 
 Rates describe the measured interval. Latency statistics use completed skb samples, not a single CPU's events or a sampled function duration. Each latency distribution shows its sample count, min, average, approximate histogram percentiles and max, in microseconds (`us`). Min, average and max come from the exact observed timestamp differences; histogram-derived percentiles are estimates. A missing completed sample is not zero latency.
 
-Normal traffic uses compact 64-byte per-CPU interval records; each completion updates S/Q/T together in one latency record. Userspace merges CPU shards, closed intervals and the open interval for cumulative counters and distributions without averaging percentiles or writing normal traffic twice. Active writers prevent premature retirement. Traffic and latency maps each allow four entries per configured path, keyed by path and epoch; memory also scales with the kernel's possible CPU count. Slow readers or delayed intervals can trigger `interval_capacity`: shared path fallback retains affected cumulative counters or latency samples, while affected interval statistics remain incomplete. Global traffic counters are per-CPU; Pending and the association budget remain global.
+Normal traffic uses compact 64-byte per-CPU interval records; each completion updates the applicable stages in one latency record: S for INPUT, S/Q/T for other paths. Userspace merges CPU shards, closed intervals and the open interval for cumulative counters and distributions without averaging percentiles or writing normal traffic twice. Active writers prevent premature retirement. Traffic and latency maps each allow four entries per configured path, keyed by path and epoch; memory also scales with the kernel's possible CPU count. Slow readers or delayed intervals can trigger `interval_capacity`: shared path fallback retains affected cumulative counters or latency samples, while affected interval statistics remain incomplete. Global traffic counters are per-CPU; Pending and the association budget remain global.
 
 Userspace reuses batch buffers and merges CPU shards as each batch is read, without copying the whole interval map. Empty latency shards do not allocate histograms. Retired intervals are deleted after the complete traversal. The scratch target is 4 MiB; one per-CPU entry or a crowded hash bucket can require more. This is not a limit on BPF maps, cumulative statistics or total process memory, and does not reduce timing coverage.
 
@@ -118,6 +123,8 @@ The IPv6 endpoint is protocol dispatcher entry at `ip6_protocol_deliver_rcu`, wh
 ## Recording
 
 `-o DIR` preserves interval snapshots in `snapshots.jsonl`. `summary.json` holds cumulative statistics and interface identities. `report.html` is a standalone offline report with no external runtime assets; it includes all captured directed paths, including paths that did not fit on the live screen. The chart timeline may be thinned to bound report size, while full interval snapshots remain in JSONL and all path summaries are retained. Live row visibility does not limit recording. Existing recording files are not overwritten; choose a new directory for another capture.
+
+HTML INPUT tables, distributions and time series display only Stack; OUTPUT/FORWARD retain all three stages. JSON latency arrays keep the Stack/Queue/Total order; the last two INPUT entries are empty distributions with zero samples.
 
 ## Requirements and limitations
 

@@ -53,6 +53,8 @@ const keyId = key => JSON.stringify([key.kind,key.netns,key.ingress,key.ingress_
 const endpoint = (index,generation,name) => index ? (name || 'if'+index)+' #'+index+' g'+generation : 'local';
 const pathName = row => endpoint(row.key.ingress,row.key.ingress_generation,row.ingress_name)+' \u2192 '+endpoint(row.key.egress,row.key.egress_generation,row.egress_name);
 const pairId = key => {const a=[key.ingress,key.ingress_generation],b=[key.egress,key.egress_generation];const swap=a[0]>b[0]||(a[0]===b[0]&&BigInt(a[1])>BigInt(b[1]));return JSON.stringify([key.netns,...(swap?b:a),...(swap?a:b)]);};
+const primaryStage = kind => kind==='Input'?0:2;
+const validStages = kind => kind==='Input'?[0]:[0,1,2];
 const paths=summary.paths;
 let kind=(paths[0]&&paths[0].row.key.kind)||'Input',sort='out_packets',descending=true,selected=null,points=[],hover=-1,stage=2;
 const colors=['#087e83','#b44b5b','#426bc1','#a07816'];
@@ -70,7 +72,7 @@ auditItem($('health'),'Inflight',integer(summary.health.inflight)+' / '+integer(
 for(const [name,value] of Object.entries(summary.health.errors))auditItem($('health'),name,integer(value));
 if(!Object.keys(summary.health.errors).length)auditItem($('health'),'Reported errors','0');
 for(const [name,value] of Object.entries(summary.health.global))auditItem($('health'),'Global '+name.replaceAll('_',' '),integer(value));
-function sortValue(path){if(sort==='path')return pathName(path.row);if(sort==='peak')return path.rate_extrema.pps.max;if(sort==='pending')return path.row.pending;if(sort.endsWith('_us'))return path.row.total_latency[2][sort];return path.row.total[sort];}
+function sortValue(path){if(sort==='path')return pathName(path.row);if(sort==='peak')return path.rate_extrema.pps.max;if(sort==='pending')return path.row.pending;if(sort.endsWith('_us'))return path.row.total_latency[primaryStage(path.row.key.kind)][sort];return path.row.total[sort];}
 function compare(a,b){const av=sortValue(a),bv=sortValue(b);if(av===null||av===undefined)return bv===null||bv===undefined?0:1;if(bv===null||bv===undefined)return -1;const result=sort==='path'?av.localeCompare(bv):(typeof av==='string'||typeof bv==='string')?(BigInt(av)<BigInt(bv)?-1:BigInt(av)>BigInt(bv)?1:0):av-bv;return (descending?-result:result)||keyId(a.row.key).localeCompare(keyId(b.row.key));}
 function renderPaths(){
  const query=$('search').value.trim().toLocaleLowerCase();let visible=paths.filter(p=>p.row.key.kind===kind);
@@ -84,11 +86,11 @@ function renderPaths(){
   if(kind==='Forward'){const row=element('tr',undefined,'pair'),cell=element('td');cell.colSpan=9;const first=group[0].row;cell.textContent='ns '+first.key.netns+' \u00b7 '+endpoint(first.key.ingress,first.key.ingress_generation,first.ingress_name)+' \u2194 '+endpoint(first.key.egress,first.key.egress_generation,first.egress_name);row.append(cell);$('path-body').append(row);}
   for(const path of group){const row=path.row,tr=element('tr',undefined,'path-row');tr.dataset.path=keyId(row.key);if(selected&&keyId(selected.row.key)===keyId(row.key))tr.classList.add('selected');
    const cell=element('td'),button=element('button',pathName(row),'path-button');button.title=pathName(row);button.addEventListener('click',()=>selectPath(path));button.append(element('span','ns '+row.key.netns,'path-id'));cell.append(button);tr.append(cell);
-   const latency=row.total_latency[2];for(const value of [integer(row.total.in_packets),integer(row.total.out_packets),number(latency.avg_us),number(latency.p90_us),number(latency.p95_us),number(latency.p99_us),number(path.rate_extrema.pps.max),integer(row.pending)])tr.append(element('td',value));$('path-body').append(tr);
+   const latency=row.total_latency[primaryStage(row.key.kind)];for(const value of [integer(row.total.in_packets),integer(row.total.out_packets),number(latency.avg_us),number(latency.p90_us),number(latency.p95_us),number(latency.p99_us),number(path.rate_extrema.pps.max),integer(row.pending)])tr.append(element('td',value));$('path-body').append(tr);
   }
  }
  for(const th of document.querySelectorAll('th[data-sort]'))th.setAttribute('aria-sort',th.dataset.sort===sort?(descending?'descending':'ascending'):'none');
- $('table-caption').textContent=integer(visible.length)+' / '+integer(paths.filter(p=>p.row.key.kind===kind).length)+' '+kind.toUpperCase()+' paths \u00b7 Cumulative TOTAL latency \u00b7 Latest pending count';
+ $('table-caption').textContent=integer(visible.length)+' / '+integer(paths.filter(p=>p.row.key.kind===kind).length)+' '+kind.toUpperCase()+' paths \u00b7 Cumulative '+stageNames()[primaryStage(kind)]+' latency \u00b7 Latest pending count';
  if(!visible.length){selected=null;$('detail').hidden=true;}else if(!selected||!visible.includes(selected))selectPath(visible[0]);
 }
 function setKind(next){kind=next;selected=null;for(const tab of document.querySelectorAll('[data-kind]')){const active=tab.dataset.kind===kind;tab.setAttribute('aria-selected',active);tab.tabIndex=active?0:-1;tab.querySelector('.count').textContent=integer(paths.filter(p=>p.row.key.kind===tab.dataset.kind).length);}$('paths').setAttribute('aria-labelledby','tab-'+kind);$('paths-heading').textContent=kind.toUpperCase()+' paths';renderPaths();$('path-table').parentElement.scrollLeft=0;}
@@ -96,10 +98,11 @@ for(const tab of document.querySelectorAll('[data-kind]')){tab.addEventListener(
 $('search').addEventListener('input',renderPaths);
 for(const th of document.querySelectorAll('th[data-sort]'))th.querySelector('button').addEventListener('click',()=>{descending=sort===th.dataset.sort?!descending:th.dataset.sort!=='path';sort=th.dataset.sort;renderPaths();});
 function selectPath(path,refresh=true){
+ const sameKind=selected?.row.key.kind===path.row.key.kind;
  selected=path;hover=-1;$('detail').hidden=false;$('detail-title').textContent=kind.toUpperCase()+' \u00b7 '+pathName(path.row);
  $('detail-meta').replaceChildren();for(const label of ['Namespace '+path.row.key.netns,integer(path.observed_snapshots)+' observed intervals','First '+new Date(path.first_unix_ms).toLocaleTimeString(),'Last '+new Date(path.last_unix_ms).toLocaleTimeString()])$('detail-meta').append(element('span',label));
- const names=stageNames();$('stages').replaceChildren();path.row.total_latency.forEach((latency,index)=>{const section=element('section'),head=element('div',undefined,'stage-head');head.append(element('h3',names[index]),element('span',integer(latency.samples)+' samples'));section.append(head);const stats=element('dl',undefined,'stage-stats');for(const [label,field] of [['Min','min_us'],['Avg','avg_us'],['Max','max_us'],['P50','p50_us'],['P90','p90_us'],['P95','p95_us'],['P99','p99_us']])auditItem(stats,label+' us',number(latency[field]));section.append(stats);const wrap=element('div',undefined,'canvas-wrap histogram'),canvas=element('canvas');canvas.dataset.hist=index;canvas.setAttribute('aria-label',names[index]+' cumulative latency histogram');wrap.append(canvas);section.append(wrap,element('div','Latency bucket upper bound / us \u00b7 Cumulative samples','hist-label'));$('stages').append(section);});
- [...$('chart-stage').options].forEach((option,index)=>option.textContent=names[index]);
+ const names=stageNames(),stages=validStages(path.row.key.kind);$('stages').replaceChildren();$('stages').style.gridTemplateColumns=stages.length===1?'1fr':'';for(const index of stages){const latency=path.row.total_latency[index],section=element('section'),head=element('div',undefined,'stage-head');head.append(element('h3',names[index]),element('span',integer(latency.samples)+' samples'));section.append(head);const stats=element('dl',undefined,'stage-stats');for(const [label,field] of [['Min','min_us'],['Avg','avg_us'],['Max','max_us'],['P50','p50_us'],['P90','p90_us'],['P95','p95_us'],['P99','p99_us']])auditItem(stats,label+' us',number(latency[field]));section.append(stats);const wrap=element('div',undefined,'canvas-wrap histogram'),canvas=element('canvas');canvas.dataset.hist=index;canvas.setAttribute('aria-label',names[index]+' cumulative latency histogram');wrap.append(canvas);section.append(wrap,element('div','Latency bucket upper bound / us \u00b7 Cumulative samples','hist-label'));$('stages').append(section);}
+ if(!sameKind||!stages.includes(stage))stage=primaryStage(path.row.key.kind);$('chart-stage').replaceChildren(...stages.map(index=>{const option=element('option',names[index]);option.value=index;return option;}));$('chart-stage').value=stage;
  points=data.snapshots.map(snapshot=>({t:snapshot.elapsed_secs,unix_ms:snapshot.unix_ms,interval_secs:snapshot.interval_secs,row:snapshot.rows.find(row=>keyId(row.key)===keyId(path.row.key))||null}));
  $('chart-caption').textContent=summary.chart_stride>1?integer(summary.chart_snapshot_count)+' of '+integer(summary.snapshot_count)+' intervals retained for charts; all paths are listed and every snapshot remains in snapshots.jsonl.':'All recorded intervals \u00b7 Latency distributions use cumulative samples; time charts use interval measurements.';
  $('path-audit').replaceChildren();for(const [name,value] of Object.entries(path.row.total))auditItem($('path-audit'),name.replaceAll('_',' '),integer(value));

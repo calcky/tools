@@ -12,6 +12,20 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub fn latency_stages(self) -> &'static [usize] {
+        match self {
+            Self::Input => &[0],
+            Self::Output | Self::Forward => &[0, 1, 2],
+        }
+    }
+
+    pub fn primary_stage(self) -> usize {
+        match self {
+            Self::Input => 0,
+            Self::Output | Self::Forward => 2,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Input => "INPUT",

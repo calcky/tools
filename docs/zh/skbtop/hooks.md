@@ -2,6 +2,23 @@
 
 本页说明 `skbtop` 实际挂载的 eBPF 观测点。`fentry/函数` 在函数入口观察，`fexit/函数` 在返回时取得结果，`tp_btf/事件` 使用内核 BTF 类型监听 tracepoint；它们不是配置在网卡上的 XDP/TC 程序，也不是一组 netfilter 规则。指标含义与操作见[使用说明](README.md)。
 
+## 计时函数对应表
+
+内核函数触发观测，BPF 处理函数记录时间或确认结果；两者不是同一个函数。下表与[采集源码](https://github.com/calcky/tools/blob/master/skbtop/bpf/observe.bpf.c)对应。
+
+| 观测点 | 内核函数 / 触发位置 | 实际探针 | BPF 处理函数 |
+| --- | --- | --- | --- |
+| INPUT / FORWARD 起点 | `__netif_receive_skb_core()` 内的 `trace_netif_receive_skb(skb)` | `tp_btf/netif_receive_skb` | `on_receive()` → `receive_event()` → `begin()` |
+| IPv4 OUTPUT 起点 | `__ip_local_out()` 入口 | `fentry/__ip_local_out` | `on_output4()` → `begin()` |
+| IPv6 OUTPUT 起点 | `__ip6_local_out()` 入口 | `fentry/__ip6_local_out` | `on_output6()` → `begin()` |
+| IPv4 INPUT 终点 | `ip_protocol_deliver_rcu()` 入口 | `fentry/ip_protocol_deliver_rcu` | `on_input4()` → `deliver()` |
+| IPv6 INPUT 终点 | `ip6_protocol_deliver_rcu()` 入口 | `fentry/ip6_protocol_deliver_rcu` | `on_input6()` → `deliver()` |
+| **Stack 终点 / Queue 起点** | **`__dev_queue_xmit()` 内的 `trace_net_dev_queue(skb)`** | **`tp_btf/net_dev_queue`** | **`on_queue()` → `enqueue()`** |
+| Queue / Total 终点候选 | `xmit_one()` 内的 `trace_net_dev_start_xmit(skb, dev)`，在调用驱动之前 | `tp_btf/net_dev_start_xmit` | `on_attempt()` → `attempt_event()` |
+| 确认发送结果 | `xmit_one()` 内的 `trace_net_dev_xmit(skb, rc, dev, len)`，在驱动返回之后 | `tp_btf/net_dev_xmit` | `on_result()` → `result_event()` |
+
+在 Linux 6.6 的 `__dev_queue_xmit()` 中，`net_dev_queue` 位于出口 netfilter/TC 处理与 TX 队列选择之后、`__dev_xmit_skb()` 及 qdisc enqueue/bypass 之前。它不是 `qdisc_enqueue()` 的入口探针；无 qdisc 的路径也会触发。因此 Queue 还可能包含锁等待、调度与 BUSY 重试，不能解读为纯 qdisc 排队时间。
+
 ## INPUT：接口到本机
 
 ```text
@@ -13,7 +30,7 @@ tp_btf/netif_receive_skb                    t0：保存起点时间和 skb->len
 IPv4: fentry/ip_protocol_deliver_rcu        t1：本机协议分发入口
 IPv6: fentry/ip6_protocol_deliver_rcu
 
-Stack = Total = t1 - t0；没有 Queue
+Stack = t1 - t0；仅采集 S，没有 Queue / Total
 ```
 
 终点位于 TCP/UDP/ICMP 等后续协议处理、socket 和应用之前；IPv6 还可能在扩展头处理之前。NIC 接收、NAPI/GRO 以及发生在 RX core 入口之前的 RPS 工作不包含在内。这里不统计非 IP 的本机交付时延。
@@ -26,13 +43,16 @@ IPv6: fentry/__ip6_local_out
         |
         | IP 输出、netfilter、邻居及出口处理
         v
-tp_btf/net_dev_queue                       tq：出口队列观察点
+__dev_queue_xmit(): trace_net_dev_queue(skb)
+  tp_btf/net_dev_queue -> on_queue()       tq：Stack 终点 / Queue 起点
         |
         | 出口调度、qdisc、可能的驱动 BUSY 重试
         v
-tp_btf/net_dev_start_xmit                  tx：驱动发送尝试入口
+xmit_one(): trace_net_dev_start_xmit(skb, dev)
+  tp_btf/net_dev_start_xmit -> on_attempt() tx：驱动发送尝试入口
         |
-tp_btf/net_dev_xmit                        结果：NETDEV_TX_OK 才确认完成
+xmit_one(): trace_net_dev_xmit(skb, rc, dev, len)
+  tp_btf/net_dev_xmit -> on_result()       结果：NETDEV_TX_OK 才确认完成
 
 Stack = tq - t0；Queue = tx - tq；Total = tx - t0
 ```
@@ -49,7 +69,8 @@ tp_btf/netif_receive_skb                    t0：入接口 RX core
         +-- Linux bridge -- br_* 分类及分支观察
         |
         v
-tp_btf/net_dev_queue                       tq：实际出接口已确定
+__dev_queue_xmit(): trace_net_dev_queue(skb)
+  tp_btf/net_dev_queue -> on_queue()       tq：实际出接口已确定
         |
 tp_btf/net_dev_start_xmit                  tx：驱动发送尝试入口
         |
@@ -60,11 +81,16 @@ Stack = tq - t0；Queue = tx - tq；Total = tx - t0
 
 转发按实际入、出接口形成有向路径；桥接泛洪的各出口分支独立统计，同接口 hairpin 也保留。NAT 不额外挂载一个计时钩子，不提供独立的 NAT 耗时。
 
-| 分类 | 实际函数入口探针 | 用途 |
+| 实际函数入口探针 | BPF 处理函数 | 用途 |
 | --- | --- | --- |
-| 路由 | `fentry/ip_forward`、`fentry/ip6_forward` | 标记 IPv4/IPv6 路由转发。 |
-| 桥接接收与分支 | `fentry/br_handle_frame_finish`、`fentry/br_forward`、`fentry/br_flood` | 标记桥接、单播分支和泛洪路径。 |
-| 桥接出口 | `fentry/br_forward_finish`、`fentry/br_dev_queue_push_xmit`、`fentry/br_dev_xmit` | 保留出口或本机经桥发出的桥接分类。 |
+| `fentry/ip_forward` | `on_route4()` → `mark()` | IPv4 路由转发。 |
+| `fentry/ip6_forward` | `on_route6()` → `mark()` | IPv6 路由转发。 |
+| `fentry/br_handle_frame_finish` | `on_bridge_receive()` → `mark()` | 桥接接收。 |
+| `fentry/br_forward` | `on_bridge_branch()` → `mark()` | 桥接出口分支。 |
+| `fentry/br_flood` | `on_bridge_flood()` → `mark()` | 桥接泛洪。 |
+| `fentry/br_forward_finish` | `on_bridge()` → `mark()` | 桥接转发出口。 |
+| `fentry/br_dev_queue_push_xmit` | `on_bridge_transmit()` → `mark()` | 桥接发送出口。 |
+| `fentry/br_dev_xmit` | `on_bridge_output()` → `mark()` | 本机经桥发出。 |
 
 这些分类探针不各自生成时延分段。队列观察还会验证 skb 控制缓冲区中的桥设备身份，补充被内联等优化影响的分类。路径统计中的 `route` / `bridge` / `combo` 分别表示仅路由、仅桥接和两种标记都出现的成功完成次数；最后一种常见于桥接与 IP 路径组合。
 
@@ -84,13 +110,25 @@ BUSY 尝试不计为 OUT，不生成成功时延样本；等待后续成功尝�
 
 ## 关联与生命周期钩子
 
-| 作用 | 实际探针 |
-| --- | --- |
-| 克隆、复制与身份继承 | `fexit/skb_clone`、`fexit/skb_copy`、`fexit/skb_copy_expand`、`fexit/__pskb_copy_fclone`、`fexit/skb_morph` |
-| 软件分段的子 skb 继承 | `fexit/skb_segment`、`fexit/skb_segment_list` |
-| 释放和清理关联 | `fentry/skb_release_head_state`、`tp_btf/consume_skb`、`tp_btf/kfree_skb` |
-| 设备注销 | `fentry/unregister_netdevice_queue` |
-| 分片与重组覆盖诊断 | `fentry/ip_do_fragment`、`fentry/ip6_fragment`、`fentry/ip_defrag`、`fentry/ipv6_frag_rcv` |
+| 实际探针 | BPF 处理函数 | 作用 |
+| --- | --- | --- |
+| `fexit/skb_clone` | `on_clone()` → `inherit()` | 克隆身份继承。 |
+| `fexit/skb_copy` | `on_copy()` → `inherit()` | 复制身份继承。 |
+| `fexit/skb_copy_expand` | `on_expand()` → `inherit()` | 扩容复制继承。 |
+| `fexit/__pskb_copy_fclone` | `on_pskb()` → `inherit()` | 部分复制继承。 |
+| `fexit/skb_morph` | `on_morph()` → `inherit()` | 替换 skb 内容后的身份继承。 |
+| `fexit/skb_segment` | `on_segment()` → `segments()` | GSO 子 skb 继承。 |
+| `fexit/skb_segment_list` | `on_segment_list()` → `segments()` | GSO 列表继承。 |
+| `fentry/skb_release_head_state` | `on_release()` → `forget()` | 清理头部状态关联。 |
+| `tp_btf/consume_skb` | `on_consume()` → `consume_event()` → `forget()` | 消费路径清理。 |
+| `tp_btf/kfree_skb` | `on_drop()` → `drop_event()` → `forget()` | 释放路径清理。 |
+| `fentry/unregister_netdevice_queue` | `on_unregister()` | 停用接口身份。 |
+| `fentry/ip_do_fragment` | `on_fragment4()` → `conversion()` | IPv4 分片覆盖缺口。 |
+| `fentry/ip6_fragment` | `on_fragment6()` → `conversion()` | IPv6 分片覆盖缺口。 |
+| `fentry/ip_defrag` | `on_reassembly4()` → `conversion()` | IPv4 重组覆盖缺口。 |
+| `fentry/ipv6_frag_rcv` | `on_reassembly6()` → `conversion()` | IPv6 重组覆盖缺口。 |
+
+`SEC("socket")` 的 `cleanup()` 由用户态通过 BPF test-run 每秒调用，执行 `origin_expire()` / `tx_expire()`，不挂载业务 socket。测试代码中的 `raw_tp/*` 和 `on_free()` 仅供原生状态机测试，不是正式采集器额外挂载的钩子。
 
 `__kfree_skb` 会经过 `skb_release_head_state`，因此不再单独挂载探针。
 Consume/drop tracepoint 仍覆盖无状态消费等其他释放路径；头部状态释放也负责在

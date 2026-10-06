@@ -87,7 +87,12 @@ def validate_summary(directory, pairs, local, classification):
         for kind, field in (('Input', 'ingress_name'), ('Output', 'egress_name')):
             matching = [row for row in rows if row['key']['kind'] == kind and row[field] == 'eth0']
             require(bool(matching), f'missing local {kind} eth0')
-            require(matching[0]['total_latency'][2]['samples'] > 0, f'no local {kind} latency')
+            stages = matching[0]['total_latency']
+            require(stages[0 if kind == 'Input' else 2]['samples'] > 0, f'no local {kind} latency')
+            if kind == 'Input':
+                require(all(stage['samples'] == 0 and stage['sum_ns'] == 0
+                            and not any(stage['histogram']) for stage in stages[1:]),
+                        'INPUT must not record Queue or Total')
     require(summary['reconciliation']['counters_match'], 'interval/cumulative counters differ')
     require(summary['reconciliation']['latency_matches'], 'interval/cumulative latency differs')
     return {'paths': measured, 'health': summary['health'],

@@ -1,8 +1,18 @@
 skbtop measures traffic and elapsed latency along observed Linux skb paths.
 
+Changes in v0.1.1:
+
+- INPUT records only Stack latency. Terminal tables, details, text snapshots
+  and HTML reports display Stack without redundant Queue/Total columns.
+- INPUT sorting and Newest use Stack timestamps; OUTPUT/FORWARD retain all
+  three latency stages. JSON keeps its fixed stage order with empty INPUT
+  Queue/Total entries.
+- Bilingual hook documentation maps all production probes to their kernel
+  functions and BPF handlers, including Queue's start in `__dev_queue_xmit()`.
+
 - INPUT, OUTPUT and route/NAT or bridge FORWARD views, grouped by interface
   and directed interface pair; dynamically track interface lifecycles.
-- IN/OUT skb rates and byte rates; Stack, Queue and Total min, avg, max and
+- IN/OUT skb rates and byte rates; applicable stages' min, avg, max and
   newest latency, with approximate percentiles in the detailed view.
 - Interactive terminal with clickable sorting, search and path details;
   plain-text snapshots and JSONL recordings with a standalone HTML report.

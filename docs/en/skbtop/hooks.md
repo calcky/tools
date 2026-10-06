@@ -2,6 +2,23 @@
 
 These are the eBPF observation points actually attached by `skbtop`. `fentry/function` observes function entry, `fexit/function` obtains its return result, and `tp_btf/event` listens to a tracepoint with its kernel BTF signature. They are not XDP/TC programs installed on interfaces or a set of netfilter rules. See the [usage page](README.md) for metrics and controls.
 
+## Timing Function Map
+
+The kernel function triggers the observation; a separate BPF handler records timestamps or confirms the result. These mappings follow the [collector source](https://github.com/calcky/tools/blob/master/skbtop/bpf/observe.bpf.c).
+
+| Observation | Kernel function / trigger | Attached probe | BPF handler |
+| --- | --- | --- | --- |
+| INPUT / FORWARD start | `trace_netif_receive_skb(skb)` inside `__netif_receive_skb_core()` | `tp_btf/netif_receive_skb` | `on_receive()` → `receive_event()` → `begin()` |
+| IPv4 OUTPUT start | Entry to `__ip_local_out()` | `fentry/__ip_local_out` | `on_output4()` → `begin()` |
+| IPv6 OUTPUT start | Entry to `__ip6_local_out()` | `fentry/__ip6_local_out` | `on_output6()` → `begin()` |
+| IPv4 INPUT end | Entry to `ip_protocol_deliver_rcu()` | `fentry/ip_protocol_deliver_rcu` | `on_input4()` → `deliver()` |
+| IPv6 INPUT end | Entry to `ip6_protocol_deliver_rcu()` | `fentry/ip6_protocol_deliver_rcu` | `on_input6()` → `deliver()` |
+| **Stack end / Queue start** | **`trace_net_dev_queue(skb)` inside `__dev_queue_xmit()`** | **`tp_btf/net_dev_queue`** | **`on_queue()` → `enqueue()`** |
+| Queue / Total endpoint candidate | `trace_net_dev_start_xmit(skb, dev)` in `xmit_one()`, before invoking the driver | `tp_btf/net_dev_start_xmit` | `on_attempt()` → `attempt_event()` |
+| Confirm transmit result | `trace_net_dev_xmit(skb, rc, dev, len)` in `xmit_one()`, after the driver returns | `tp_btf/net_dev_xmit` | `on_result()` → `result_event()` |
+
+In Linux 6.6, `net_dev_queue` occurs inside `__dev_queue_xmit()` after egress netfilter/TC processing and TX queue selection, before `__dev_xmit_skb()` and qdisc enqueue/bypass. It is not an entry probe on `qdisc_enqueue()`, and no-qdisc paths also trigger it. Queue can therefore include lock waits, scheduling and BUSY retries, rather than pure qdisc residence time.
+
 ## INPUT: Interface To Host
 
 ```text
@@ -13,7 +30,7 @@ tp_btf/netif_receive_skb                    t0: save start time and skb->len
 IPv4: fentry/ip_protocol_deliver_rcu        t1: local protocol dispatcher entry
 IPv6: fentry/ip6_protocol_deliver_rcu
 
-Stack = Total = t1 - t0; no Queue
+Stack = t1 - t0; only S is recorded, no Queue / Total
 ```
 
 The endpoint precedes subsequent TCP/UDP/ICMP processing, sockets and applications; IPv6 extension-header processing may also follow it. NIC reception, NAPI/GRO and RPS work before RX core entry are excluded. Non-IP local delivery has no measured INPUT latency.
@@ -26,13 +43,16 @@ IPv6: fentry/__ip6_local_out
         |
         | IP output, netfilter, neighbor and egress work
         v
-tp_btf/net_dev_queue                       tq: egress queue observation
+__dev_queue_xmit(): trace_net_dev_queue(skb)
+  tp_btf/net_dev_queue -> on_queue()       tq: Stack end / Queue start
         |
         | Egress scheduling, qdisc, possible driver BUSY retries
         v
-tp_btf/net_dev_start_xmit                  tx: driver transmit attempt entry
+xmit_one(): trace_net_dev_start_xmit(skb, dev)
+  tp_btf/net_dev_start_xmit -> on_attempt() tx: driver transmit attempt entry
         |
-tp_btf/net_dev_xmit                        result: NETDEV_TX_OK confirms completion
+xmit_one(): trace_net_dev_xmit(skb, rc, dev, len)
+  tp_btf/net_dev_xmit -> on_result()       result: NETDEV_TX_OK confirms completion
 
 Stack = tq - t0; Queue = tx - tq; Total = tx - t0
 ```
@@ -49,7 +69,8 @@ tp_btf/netif_receive_skb                    t0: ingress RX core
         +-- Linux bridge -- br_* classification and branches
         |
         v
-tp_btf/net_dev_queue                       tq: actual egress interface known
+__dev_queue_xmit(): trace_net_dev_queue(skb)
+  tp_btf/net_dev_queue -> on_queue()       tq: actual egress interface known
         |
 tp_btf/net_dev_start_xmit                  tx: driver transmit attempt entry
         |
@@ -60,11 +81,16 @@ Stack = tq - t0; Queue = tx - tq; Total = tx - t0
 
 Actual ingress and egress interfaces form a directed path. Each bridge flood branch is counted independently, including same-interface hairpins. NAT has no additional timing probe and no separately measured NAT duration.
 
-| Classification | Actual function-entry probes | Purpose |
+| Function-entry probe | BPF handler | Purpose |
 | --- | --- | --- |
-| Route | `fentry/ip_forward`, `fentry/ip6_forward` | Mark IPv4/IPv6 route forwarding. |
-| Bridge receive and branches | `fentry/br_handle_frame_finish`, `fentry/br_forward`, `fentry/br_flood` | Mark bridge receive, unicast branches and flooding. |
-| Bridge egress | `fentry/br_forward_finish`, `fentry/br_dev_queue_push_xmit`, `fentry/br_dev_xmit` | Retain bridge classification at egress or for local output through a bridge. |
+| `fentry/ip_forward` | `on_route4()` → `mark()` | IPv4 route forwarding. |
+| `fentry/ip6_forward` | `on_route6()` → `mark()` | IPv6 route forwarding. |
+| `fentry/br_handle_frame_finish` | `on_bridge_receive()` → `mark()` | Bridge receive. |
+| `fentry/br_forward` | `on_bridge_branch()` → `mark()` | Bridge egress branch. |
+| `fentry/br_flood` | `on_bridge_flood()` → `mark()` | Bridge flooding. |
+| `fentry/br_forward_finish` | `on_bridge()` → `mark()` | Bridge forwarding egress. |
+| `fentry/br_dev_queue_push_xmit` | `on_bridge_transmit()` → `mark()` | Bridge transmit egress. |
+| `fentry/br_dev_xmit` | `on_bridge_output()` → `mark()` | Local output through a bridge. |
 
 These classification probes do not produce separate latency stages. The queue observer also validates the bridge device identity in the skb control buffer to supplement classification affected by inlining and similar optimizations. Path counters `route` / `bridge` / `combo` count successful completions with only route, only bridge, or both markers; the last often appears where bridge and IP paths combine.
 
@@ -84,13 +110,25 @@ BUSY attempts add neither OUT counts nor successful latency samples. A later suc
 
 ## Correlation And Lifecycle Hooks
 
-| Purpose | Actual probes |
-| --- | --- |
-| Clone/copy identity inheritance | `fexit/skb_clone`, `fexit/skb_copy`, `fexit/skb_copy_expand`, `fexit/__pskb_copy_fclone`, `fexit/skb_morph` |
-| Software segmentation child inheritance | `fexit/skb_segment`, `fexit/skb_segment_list` |
-| Free and retire associations | `fentry/skb_release_head_state`, `tp_btf/consume_skb`, `tp_btf/kfree_skb` |
-| Device unregister | `fentry/unregister_netdevice_queue` |
-| Fragmentation/reassembly coverage diagnostics | `fentry/ip_do_fragment`, `fentry/ip6_fragment`, `fentry/ip_defrag`, `fentry/ipv6_frag_rcv` |
+| Attached probe | BPF handler | Purpose |
+| --- | --- | --- |
+| `fexit/skb_clone` | `on_clone()` → `inherit()` | Clone identity inheritance. |
+| `fexit/skb_copy` | `on_copy()` → `inherit()` | Copy identity inheritance. |
+| `fexit/skb_copy_expand` | `on_expand()` → `inherit()` | Expanded copy inheritance. |
+| `fexit/__pskb_copy_fclone` | `on_pskb()` → `inherit()` | Partial copy inheritance. |
+| `fexit/skb_morph` | `on_morph()` → `inherit()` | Identity inheritance after replacing skb contents. |
+| `fexit/skb_segment` | `on_segment()` → `segments()` | GSO child inheritance. |
+| `fexit/skb_segment_list` | `on_segment_list()` → `segments()` | GSO list inheritance. |
+| `fentry/skb_release_head_state` | `on_release()` → `forget()` | Head-state association cleanup. |
+| `tp_btf/consume_skb` | `on_consume()` → `consume_event()` → `forget()` | Consumption cleanup. |
+| `tp_btf/kfree_skb` | `on_drop()` → `drop_event()` → `forget()` | Free-path cleanup. |
+| `fentry/unregister_netdevice_queue` | `on_unregister()` | Disable the interface identity. |
+| `fentry/ip_do_fragment` | `on_fragment4()` → `conversion()` | IPv4 fragmentation coverage gap. |
+| `fentry/ip6_fragment` | `on_fragment6()` → `conversion()` | IPv6 fragmentation coverage gap. |
+| `fentry/ip_defrag` | `on_reassembly4()` → `conversion()` | IPv4 reassembly coverage gap. |
+| `fentry/ipv6_frag_rcv` | `on_reassembly6()` → `conversion()` | IPv6 reassembly coverage gap. |
+
+Userspace calls the `SEC("socket")` program `cleanup()` through BPF test-run once per second to execute `origin_expire()` / `tx_expire()`; it is not attached to a business socket. Test-only `raw_tp/*` wrappers and `on_free()` support the native state-machine harness and are not additional production attachments.
 
 `__kfree_skb` reaches `skb_release_head_state`, so it has no separate attachment.
 Consume/drop tracepoints remain for alternate free paths, including stateless

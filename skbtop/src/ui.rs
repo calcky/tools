@@ -69,6 +69,13 @@ enum Sort {
 }
 
 impl Sort {
+    fn for_kind(self, kind: Kind) -> Self {
+        match self {
+            Self::Latency(metric, _) if kind == Kind::Input => Self::Latency(metric, Stage::Stack),
+            _ => self,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Path => "PATH",
@@ -98,7 +105,7 @@ impl Sort {
     }
 
     fn latency(self, row: &Row) -> Option<f64> {
-        let Self::Latency(metric, stage) = self else {
+        let Self::Latency(metric, stage) = self.for_kind(row.key.kind) else {
             return None;
         };
         let latency = &row.latency[stage as usize];
@@ -108,7 +115,7 @@ impl Sort {
             Metric::Max => latency.max_us,
             Metric::Newest => {
                 // Never combine stages from different completed samples.
-                let total = &row.latency[Stage::Total as usize];
+                let total = &row.latency[row.key.kind.primary_stage()];
                 if total.newest_us.is_some()
                     && total.newest_at_ns.is_some()
                     && latency.newest_at_ns == total.newest_at_ns
@@ -270,6 +277,7 @@ impl Ui {
             .copied()
         {
             self.focus = panel;
+            self.sort = self.sort.for_kind(KINDS[panel]);
             self.set_sort(sort);
             return true;
         }
@@ -491,7 +499,9 @@ impl Ui {
             if rows.is_empty() { 0 } else { selected + 1 },
         );
         frame.render_widget(block.title(title), area);
-        let columns = main_columns(inner.width);
+        let kind = KINDS[index];
+        let panel_sort = self.sort.for_kind(kind);
+        let columns = main_columns(inner.width, kind);
         let fixed: u16 = columns.iter().map(|(_, width)| width).sum();
         let path_width = inner
             .width
@@ -607,7 +617,7 @@ impl Ui {
                     } else {
                         sort.label()
                     };
-                    let label = if *sort == self.sort {
+                    let label = if *sort == panel_sort {
                         format!(
                             "{label}{}",
                             if self.descending {
@@ -629,7 +639,7 @@ impl Ui {
                     } else {
                         vec![label, Line::raw("")]
                     };
-                    Cell::from(lines).style(if *sort == self.sort {
+                    Cell::from(lines).style(if *sort == panel_sort {
                         emphatic
                     } else {
                         Style::default()
@@ -736,9 +746,9 @@ impl Ui {
                 "LATENCY (us; percentiles approximate): min, avg, p50, p90, p95, p99, max, newest",
                 Style::default().add_modifier(Modifier::BOLD),
             ));
-            for (stage, name) in STAGES.iter().enumerate() {
+            for &stage in key.kind.latency_stages() {
                 lines.push(Line::styled(
-                    *name,
+                    STAGES[stage],
                     Style::default().add_modifier(Modifier::BOLD),
                 ));
                 lines.push(Line::raw(latency_line("interval", &row.latency[stage])));
@@ -1014,8 +1024,10 @@ fn latency_number(value: Option<f64>, width: usize) -> String {
     }
 }
 
-fn main_columns(width: u16) -> Vec<(Sort, u16)> {
-    let stages: &[Stage] = if width >= 118 {
+fn main_columns(width: u16, kind: Kind) -> Vec<(Sort, u16)> {
+    let stages: &[Stage] = if kind == Kind::Input {
+        &[Stage::Stack]
+    } else if width >= 118 {
         &LATENCY_STAGES
     } else {
         &[Stage::Total]
@@ -1110,6 +1122,12 @@ pub fn text(snapshot: &Snapshot) -> String {
         health_line(snapshot),
     ];
     for kind in KINDS {
+        let stages: Vec<_> = kind
+            .latency_stages()
+            .iter()
+            .map(|&stage| LATENCY_STAGES[stage])
+            .collect();
+        let metric_width = stages.len() * 7 + (stages.len() - 1) * 3;
         lines.push(String::new());
         lines.push(kind.label().into());
         let mut header = vec![
@@ -1122,7 +1140,7 @@ pub fn text(snapshot: &Snapshot) -> String {
         header.extend(
             METRICS
                 .iter()
-                .map(|metric| format!("{:^27}", metric.label())),
+                .map(|metric| format!("{:^metric_width$}", metric.label())),
         );
         header.push(format!("{:>6}", "PEND"));
         lines.push(header.join(" | "));
@@ -1134,11 +1152,7 @@ pub fn text(snapshot: &Snapshot) -> String {
             " ".repeat(7),
         ];
         for _ in METRICS {
-            subheader.extend(
-                LATENCY_STAGES
-                    .iter()
-                    .map(|stage| format!("{:>7}", stage.initial())),
-            );
+            subheader.extend(stages.iter().map(|stage| format!("{:>7}", stage.initial())));
         }
         subheader.push(" ".repeat(6));
         lines.push(subheader.join(" | "));
@@ -1155,7 +1169,7 @@ pub fn text(snapshot: &Snapshot) -> String {
                 format!("{:>7}", rate(row.pps)),
             ];
             for metric in METRICS {
-                cells.extend(LATENCY_STAGES.iter().map(|stage| {
+                cells.extend(stages.iter().map(|stage| {
                     format!(
                         "{:>7}",
                         latency_number(Sort::Latency(metric, *stage).latency(row), 7)
@@ -1224,8 +1238,16 @@ mod tests {
                 combo: 10,
                 freed: 30,
             },
-            latency: [latency(p99 / 2.0), latency(p99 / 2.0), latency(p99)],
-            total_latency: [latency(p99), latency(p99), latency(p99 * 2.0)],
+            latency: if kind == Kind::Input {
+                [latency(p99), Latency::default(), Latency::default()]
+            } else {
+                [latency(p99 / 2.0), latency(p99 / 2.0), latency(p99)]
+            },
+            total_latency: if kind == Kind::Input {
+                [latency(p99 * 2.0), Latency::default(), Latency::default()]
+            } else {
+                [latency(p99), latency(p99), latency(p99 * 2.0)]
+            },
             pending: 1,
             bps,
             pps,
@@ -1321,14 +1343,17 @@ mod tests {
             if width >= 160 {
                 expected.push(Sort::Pending);
             }
-            for panel in 0..3 {
+            for (panel, kind) in KINDS.into_iter().enumerate() {
+                let mut panel_expected: Vec<_> =
+                    expected.iter().map(|sort| sort.for_kind(kind)).collect();
+                panel_expected.dedup();
                 let targets: Vec<_> = headers
                     .iter()
                     .filter(|(_, index, _)| *index == panel)
                     .collect();
                 assert_eq!(
                     targets.iter().map(|(_, _, sort)| *sort).collect::<Vec<_>>(),
-                    expected
+                    panel_expected
                 );
                 let bottom = headers
                     .iter()
@@ -1429,7 +1454,7 @@ mod tests {
         assert!(ui.headers.is_empty());
         assert!(!click(&mut ui, area.x, area.y));
         render(&mut ui, &snapshot, 160, 40);
-        assert_eq!(ui.headers.len(), 54);
+        assert_eq!(ui.headers.len(), 46);
     }
 
     #[test]
@@ -1586,6 +1611,7 @@ mod tests {
         assert!(header.find("IN bit/s").unwrap() < header.find("OUT bit/s").unwrap());
         assert!(header.find("OUT bit/s").unwrap() < header.find("IN PPS").unwrap());
         assert!(header.find("IN PPS").unwrap() < header.find("OUT PPS").unwrap());
+        press(&mut ui, KeyCode::Tab);
         press(&mut ui, KeyCode::Enter);
         let detail = screen(&render(&mut ui, &snapshot, 160, 40)).join("\n");
         for field in [
@@ -1609,8 +1635,8 @@ mod tests {
             "combo=1",
             "freed=3",
             "pending=1",
-            "IN bit/s=8.80k OUT bit/s=8.00k",
-            "IN PPS=11.0 OUT PPS=10.0",
+            "IN bit/s=17.6k OUT bit/s=16.0k",
+            "IN PPS=22.0 OUT PPS=20.0",
             "inflight_full: 3",
         ] {
             assert!(detail.contains(field), "missing {field}:\n{detail}");
@@ -1776,6 +1802,7 @@ mod tests {
         let snapshot = fixture();
         let mut ui = Ui::new();
         render(&mut ui, &snapshot, 80, 24);
+        press(&mut ui, KeyCode::Tab);
         press(&mut ui, KeyCode::Enter);
         let detail = screen(&render(&mut ui, &snapshot, 80, 24)).join("\n");
         assert!(detail.contains("STACK"));
@@ -1914,10 +1941,10 @@ mod tests {
         snapshot.rows[1].latency[1].avg_us = Some(2.0);
         snapshot.rows[1].latency[1].p99_us = Some(200.0);
         snapshot.rows[0].latency[2].avg_us = Some(3.75);
-        snapshot.rows[0].latency[2].min_us = Some(0.5);
-        snapshot.rows[0].latency[2].max_us = Some(70.0);
-        snapshot.rows[0].latency[2].newest_us = Some(6.0);
-        snapshot.rows[0].latency[2].newest_at_ns = Some(42);
+        snapshot.rows[0].latency[0].min_us = Some(0.5);
+        snapshot.rows[0].latency[0].max_us = Some(70.0);
+        snapshot.rows[0].latency[0].newest_us = Some(6.0);
+        snapshot.rows[0].latency[0].newest_at_ns = Some(42);
         snapshot.rows[0].latency[2].p99_us = Some(60.0);
         let output = text(&snapshot);
         let row = output
@@ -1926,16 +1953,10 @@ mod tests {
             .unwrap();
         let columns: Vec<_> = row.split('|').map(str::trim).collect();
         assert_eq!(&columns[1..5], ["110", "100", "1.10", "1.00"]);
-        assert_eq!(
-            &columns[5..17],
-            [
-                "1.25", "2.50", "3.75", "5.00", "5.00", "0.500", "5.00", "5.00", "70.0", "-", "-",
-                "6.00"
-            ]
-        );
+        assert_eq!(&columns[5..9], ["1.25", "0.500", "70.0", "6.00"]);
         let compact = screen(&render(&mut Ui::new(), &snapshot, 80, 24)).join("\n");
         for value in [
-            "Avg", "Min", "Max", "Newest", "3.75", "0.500", "70.0", "6.00",
+            "Avg", "Min", "Max", "Newest", "1.25", "0.500", "70.0", "6.00",
         ] {
             assert!(compact.contains(value), "missing {value}: {compact}");
         }
@@ -1956,16 +1977,16 @@ mod tests {
             .iter()
             .position(|line| line.contains("eth2 -> LOCAL"))
             .unwrap() as u16;
-        for stage in [Stage::Stack, Stage::Queue] {
-            let (area, _, _) = ui
-                .headers
-                .iter()
-                .find(|(_, panel, sort)| *panel == 0 && *sort == Sort::Latency(Metric::Avg, stage))
-                .unwrap();
-            let x = area.right() - 1;
-            assert_eq!(buffer[(x, first)].fg, Color::Yellow);
-            assert_eq!(buffer[(x, second)].fg, Color::Reset);
-        }
+        let (area, _, _) = ui
+            .headers
+            .iter()
+            .find(|(_, panel, sort)| {
+                *panel == 0 && *sort == Sort::Latency(Metric::Avg, Stage::Stack)
+            })
+            .unwrap();
+        let x = area.right() - 1;
+        assert_eq!(buffer[(x, first)].fg, Color::Yellow);
+        assert_eq!(buffer[(x, second)].fg, Color::Reset);
     }
 
     #[test]
@@ -2009,10 +2030,8 @@ mod tests {
     }
 
     #[test]
-    fn two_level_headers_span_stages_and_keep_input_queue_unavailable() {
-        let mut snapshot = fixture();
-        snapshot.rows[0].latency[0] = snapshot.rows[0].latency[2].clone();
-        snapshot.rows[0].latency[1] = Latency::default();
+    fn two_level_headers_show_only_stack_for_input() {
+        let snapshot = fixture();
         let mut ui = Ui::new();
         for width in [80, 119, 120, 139, 140, 159, 160, 200] {
             let buffer = render(&mut ui, &snapshot, width, 32);
@@ -2031,25 +2050,29 @@ mod tests {
                         *panel == 0 && matches!(sort, Sort::Latency(m, _) if *m == metric)
                     })
                     .collect();
-                assert_eq!(targets.len(), if width >= 120 { 3 } else { 1 });
+                assert_eq!(targets.len(), 1);
+                assert_eq!(targets[0].2, Sort::Latency(metric, Stage::Stack));
                 let first = targets.first().unwrap().0;
                 let last = targets.last().unwrap().0;
                 let caption: String = (first.x..last.right())
                     .map(|x| buffer[(x, header)].symbol())
                     .collect();
                 assert_eq!(caption.trim(), metric.label());
-                if width >= 120 {
-                    assert_eq!(buffer[(first.right(), header + 1)].symbol(), "\u{2502}");
-                    let queue = targets[1].0;
-                    assert_eq!(buffer[(queue.right() - 1, input)].symbol(), "-");
-                }
+                let output_stages = ui
+                    .headers
+                    .iter()
+                    .filter(|(_, panel, sort)| {
+                        *panel == 1 && matches!(sort, Sort::Latency(m, _) if *m == metric)
+                    })
+                    .count();
+                assert_eq!(output_stages, if width >= 120 { 3 } else { 1 });
             }
         }
         let (area, _, sort) = *ui
             .headers
             .iter()
             .find(|(_, panel, sort)| {
-                *panel == 0 && *sort == Sort::Latency(Metric::Max, Stage::Queue)
+                *panel == 1 && *sort == Sort::Latency(Metric::Max, Stage::Queue)
             })
             .unwrap();
         assert!(click(&mut ui, area.x, area.y));
@@ -2061,6 +2084,34 @@ mod tests {
         assert!(screen(&buffer)
             .iter()
             .any(|line| line.contains(&format!("sort: {} desc", sort.label()))));
+    }
+
+    #[test]
+    fn input_newest_sort_and_details_use_stack_without_total() {
+        let mut first = row(Kind::Input, 1, 0, 1.0, 1.0, 10.0);
+        first.latency[0].newest_us = Some(11.0);
+        first.latency[0].newest_at_ns = Some(100);
+        let second = row(Kind::Input, 2, 0, 1.0, 1.0, 20.0);
+        let snapshot = snapshot(vec![first, second]);
+        assert_eq!(
+            Sort::Latency(Metric::Newest, Stage::Stack).latency(&snapshot.rows[0]),
+            Some(11.0)
+        );
+        let sorted = ordered_rows(
+            &snapshot,
+            Kind::Input,
+            Sort::Latency(Metric::Avg, Stage::Total),
+            true,
+            "",
+        );
+        assert_eq!(sorted[0].key.ingress, 2);
+        let mut ui = Ui::new();
+        render(&mut ui, &snapshot, 120, 32);
+        press(&mut ui, KeyCode::Enter);
+        let detail = screen(&render(&mut ui, &snapshot, 120, 48)).join("\n");
+        assert!(detail.contains("STACK"));
+        assert!(!detail.contains("QUEUE"));
+        assert!(!detail.contains("TOTAL"));
     }
 
     #[test]
@@ -2078,6 +2129,16 @@ mod tests {
         let header = lines.iter().position(|line| line.contains("PATH")).unwrap();
         assert_eq!(lines[header].len(), lines[header + 1].len());
         assert_eq!(lines[header].len(), lines[header + 2].len());
+        assert_eq!(lines[header + 1].matches('S').count(), 4);
+        assert_eq!(lines[header + 1].matches('Q').count(), 0);
+        assert_eq!(lines[header + 1].matches('T').count(), 0);
+        let header = lines
+            .iter()
+            .enumerate()
+            .skip(header + 1)
+            .find(|(_, line)| line.contains("PATH"))
+            .unwrap()
+            .0;
         assert_eq!(lines[header + 1].matches('S').count(), 4);
         assert_eq!(lines[header + 1].matches('Q').count(), 4);
         assert_eq!(lines[header + 1].matches('T').count(), 4);
