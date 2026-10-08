@@ -36,11 +36,17 @@ droptop -d 0.5 -c 10   # half-second samples, suitable for redirection
 
 The top table ranks groups by `drop/s`; the middle timeline shows recent skb samples from the selected group; the bottom shows the selected packet metadata and a hot call stack for the **group**. The stack is not attributed to the selected skb. At widths of at least 105 columns, the bottom panels sit side by side; otherwise they stack vertically.
 
+Tracepoint wrappers and the leading `kfree_skb_reason` frame are hidden so the first frame shows the drop caller.
+
 Use `j/k` or arrow keys to select a group, `[` / `]` to browse samples, Left/Right to choose a hot path, PageUp/PageDown to scroll stack frames, `g` to cycle grouping and `q` to quit. After changing groups, wait for new drops to populate its samples and stacks. `-c` text mode prints only the top 30 groups per sample; it does not collect skb samples or stacks.
 
+**Space pauses/resumes**. `PAUSED` freezes rates, totals, samples and stacks while allowing detail navigation and regrouping of frozen counters. Details are retained only for the group selected when pausing; other groups show no captured details, and returning to the captured group restores them. Global kernel drop counting continues, but stack and skb sampling stop. Resume collects fresh details and starts a new rate baseline: paused events remain in `TOTAL` without causing a rate spike.
+
 - `drop/s` is the count increase divided by the measured interval; `TOTAL` counts events since probe attachment.
-- The sample timeline shows observation time, protocol, length and flow; wide terminals also show reason and call site.
+- The sample timeline shows observation time, protocol, length, CPU, TID, `PROCESS [FD]` as `name(PID)`, and flow. The call site appears at 105 columns and the reason at 120 columns. Column widths adapt to the contents; values that cannot fit end in `...`.
 - Sample details include `skb_iif` (receive ifindex) and `skb->dev` (device at the drop point). Neither reliably identifies the original physical ingress interface; addresses and ports may be post-NAT.
+- `CPU` is where the drop was observed. `PROC [FD snapshot]` lists local holders of descriptors matching the associated socket inode as `name(PID)`. This is a later lookup snapshot, not proof of the sender or the process responsible for the drop. Shared sockets may have several holders; up to two are shown with `+N` for others. Incomplete lookups say `partial`; unverified associations stay `-`, without five-tuple inference.
+- Thread information appears in the timeline and at the top of `Selected skb`. `TID` and `THREAD` remain `-` unless thread attribution can be proven. The current softirq/interrupted task or a socket's holding process cannot establish which thread owns a packet, so this version does not infer a thread from them. A thread's process PID is the `Tgid` field in `/proc/<tid>/status`; it may differ from its TID. FD lookup results also freeze on pause.
 - `map` and `stack` report aggregation-map misses and stack capture or aggregation failures. The sample header's `limit`, `ring` and `user` counters expose sample loss without changing the separate full-rate drop counts. `limit` and `ring` are interval deltas; `user` is cumulative since startup.
 
 ## Scope And Requirements

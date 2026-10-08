@@ -89,11 +89,13 @@ pub struct DropEvent {
     pub dest_port: u16,
     pub source: [u8; 16],
     pub dest: [u8; 16],
+    pub socket_inode: u64,
+    pub cpu: u32,
 }
 
 impl DropEvent {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != 80 {
+        if bytes.len() != 96 {
             bail!("invalid skb sample size: {}", bytes.len());
         }
         Ok(Self {
@@ -112,11 +114,29 @@ impl DropEvent {
             dest_port: u16::from_ne_bytes(bytes[46..48].try_into()?),
             source: bytes[48..64].try_into()?,
             dest: bytes[64..80].try_into()?,
+            socket_inode: u64::from_ne_bytes(bytes[80..88].try_into()?),
+            cpu: u32::from_ne_bytes(bytes[88..92].try_into()?),
         })
     }
 }
 
-#[derive(Default)]
+pub fn comm_name(bytes: &[u8]) -> String {
+    let end = bytes
+        .iter()
+        .position(|&value| value == 0)
+        .unwrap_or(bytes.len());
+    let name: String = String::from_utf8_lossy(&bytes[..end])
+        .chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect();
+    if name.is_empty() {
+        "-".into()
+    } else {
+        name
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct Snapshot {
     pub drops: HashMap<Key, u64>,
     pub stacks: HashMap<u32, u64>,
@@ -399,18 +419,31 @@ mod tests {
 
     #[test]
     fn parses_sample_with_fixed_layout() {
-        let mut bytes = [0_u8; 80];
+        let mut bytes = [0_u8; 96];
         bytes[24..28].copy_from_slice(&4_u32.to_ne_bytes());
         bytes[36..40].copy_from_slice(&7_u32.to_ne_bytes());
         bytes[40] = 4;
         bytes[41] = 17;
         bytes[44..46].copy_from_slice(&1234_u16.to_ne_bytes());
         bytes[48..52].copy_from_slice(&[192, 0, 2, 1]);
+        bytes[80..88].copy_from_slice(&123456_u64.to_ne_bytes());
+        bytes[88..92].copy_from_slice(&5_u32.to_ne_bytes());
         let event = DropEvent::parse(&bytes).unwrap();
         assert_eq!(event.ingress_ifindex, 4);
         assert_eq!(event.generation, 7);
         assert_eq!(event.source_port, 1234);
         assert_eq!(&event.source[..4], &[192, 0, 2, 1]);
-        assert!(DropEvent::parse(&bytes[..79]).is_err());
+        assert_eq!(event.socket_inode, 123456);
+        assert_eq!(event.cpu, 5);
+        assert!(DropEvent::parse(&bytes[..80]).is_err());
+        assert!(DropEvent::parse(&bytes[..95]).is_err());
+    }
+
+    #[test]
+    fn comm_names_are_bounded_and_cannot_inject_terminal_control_text() {
+        assert_eq!(comm_name(b"worker\0ignored"), "worker");
+        assert_eq!(comm_name(b"abcdefghijklmnop"), "abcdefghijklmnop");
+        assert_eq!(comm_name(b"a\n\x1bb\0"), "a??b");
+        assert_eq!(comm_name(b"\0"), "-");
     }
 }

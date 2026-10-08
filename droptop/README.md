@@ -41,7 +41,9 @@ droptop -d 0.5 -c 10   # half-second samples, suitable for redirection
 In the live view, the top table ranks drop groups, the middle timeline lists
 recent skb samples from the selected group, and the bottom shows the selected
 sample plus a **group-level** hot-path stack. The stack is not attributed to
-the selected skb. At narrower terminal widths the two bottom panels are
+the selected skb. Tracepoint wrappers and the leading `kfree_skb_reason`
+frame are hidden so the first frame shows the drop caller. At narrower terminal
+widths the two bottom panels are
 stacked; at 105 columns or wider they sit side by side. `j/k` or arrow keys
 select a group, `[`/`]` browse older/newer skb samples, Left/Right select a
 hot path, PageUp/PageDown scroll its frames, `g` cycles aggregation, and `q`
@@ -55,9 +57,21 @@ that could not be recorded after the bounded aggregation map filled; `stack`
 reports failed stack capture or stack aggregation. A missing stack is not proof
 that the selected reason has no call path.
 
+Press **Space** to pause/resume. `PAUSED` freezes the displayed rates, totals,
+samples and stacks; sample and stack navigation remain available. You can
+change groups or aggregation to inspect the frozen counters, but details
+are retained only for the group selected when pausing. Other groups show
+"no captured details"; returning to the captured group restores its details.
+Global kernel drop counting continues while paused; stack and skb sampling
+stop. Resume starts fresh detail collection and a new rate baseline, so
+paused events remain in `TOTAL` without appearing as a rate spike.
+
 The skb timeline shows when each sample was observed since attachment, its
-protocol, length and flow; a wide terminal also shows its reason and drop
-call site. The selected skb panel shows its reason, length, source and
+protocol, length, CPU, TID, `PROCESS [FD]` as `name(PID)`, and flow. At 105
+columns it adds the call site, and at 120 columns it also shows the reason.
+Column widths adapt to the samples; values that cannot fit end in `...`.
+The selected skb panel starts with CPU/TID/thread information and shows its
+reason, length, source and
 destination addresses and TCP/UDP ports, drop call site, `skb_iif` (RX
 ifindex), and
 `skb->dev` (device associated at the drop point). `skb_iif` can be zero or
@@ -70,6 +84,21 @@ per second for the selected group, and the window keeps the latest 16. The
 `limit`, `ring`, and `user` counters in the header disclose sample loss;
 they do not affect the separate full-rate drop counters. `limit` and `ring`
 are interval deltas; `user` is cumulative since startup.
+
+The sample's `CPU` is the CPU that observed the drop. `PROC [FD snapshot]`
+lists `name(PID)` for processes whose open descriptors match the inode of
+`skb->sk->sk_socket` when available; it is a later `/proc` lookup, not proof
+of the sender or the process responsible for dropping the packet. Shared
+sockets can show several holders; up to two are shown with `+N` for others.
+Lookups run in the background at most once per second, with a 50 ms / 25,000
+descriptor budget and at most eight holders per socket; missing permissions
+or limits produce `partial`. No associated inode or no verified FD holder
+leaves `PROC` as `-`; there is no five-tuple inference. `TID` and `THREAD`
+remain `-`: neither the current task in IRQ/softirq nor the process holding
+a shared socket proves a packet's thread. Owner snapshots freeze on pause.
+Linux TID identifies a thread; its process PID is the `Tgid` field in
+`/proc/<tid>/status`, which may differ from the TID. An FD holder's PID is
+not sufficient to infer the packet's TID.
 
 Reason names come from the running kernel's BTF `skb_drop_reason` enum; unknown
 values remain numeric. Device names resolve only in the current network

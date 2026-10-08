@@ -11,8 +11,17 @@ struct net_device {
     int ifindex;
     possible_net_t nd_net;
 } __attribute__((preserve_access_index));
+struct inode { unsigned long i_ino; } __attribute__((preserve_access_index));
+struct file { struct inode *f_inode; } __attribute__((preserve_access_index));
+struct socket { struct file *file; } __attribute__((preserve_access_index));
+struct sock_common { __u8 skc_state; } __attribute__((preserve_access_index));
+struct sock {
+    struct sock_common __sk_common;
+    struct socket *sk_socket;
+} __attribute__((preserve_access_index));
 struct sk_buff {
     struct net_device *dev;
+    struct sock *sk;
     __u16 protocol;
     int skb_iif;
     __u32 len;
@@ -57,7 +66,12 @@ struct skb_event {
     __u16 dest_port;
     __u8 source[16];
     __u8 dest[16];
+    __u64 socket_inode;
+    __u32 cpu;
+    __u32 reserved;
 };
+
+_Static_assert(sizeof(struct skb_event) == 96, "skb event layout");
 
 struct sample_budget {
     __u64 second;
@@ -223,6 +237,25 @@ static __always_inline void emit_sample(struct sk_buff *skb, struct drop_key *ke
     event->ingress_ifindex = BPF_CORE_READ(skb, skb_iif);
     event->length = BPF_CORE_READ(skb, len);
     event->generation = focus->generation;
+    event->cpu = bpf_get_smp_processor_id();
+    struct sock *sk = BPF_CORE_READ(skb, sk);
+    if (sk) {
+        __u8 state = BPF_CORE_READ(sk, __sk_common.skc_state);
+        /* TIME_WAIT and request sockets do not have a full struct sock. */
+        if (state != 6 && state != 12) {
+            struct inode *inode = BPF_CORE_READ(sk, sk_socket, file, f_inode);
+            if (inode) {
+                /* i_ino is unsigned long: four bytes on ARMv7 kernels. */
+                if (bpf_core_field_size(inode->i_ino) == 4) {
+                    __u32 number = 0;
+                    bpf_core_read(&number, sizeof(number), &inode->i_ino);
+                    event->socket_inode = number;
+                } else {
+                    event->socket_inode = BPF_CORE_READ(inode, i_ino);
+                }
+            }
+        }
+    }
     read_tuple(skb, key->protocol, event);
     bpf_ringbuf_submit(event, 0);
 }

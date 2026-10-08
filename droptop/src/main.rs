@@ -1,5 +1,6 @@
 mod collect;
 mod model;
+mod owners;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -113,6 +114,9 @@ impl Labels {
 struct App {
     group: GroupBy,
     track_stacks: bool,
+    paused: bool,
+    captured_group: Option<GroupKey>,
+    owners: owners::Snapshot,
     current: Snapshot,
     previous: Snapshot,
     rows: Vec<Row>,
@@ -135,6 +139,9 @@ impl App {
         Self {
             group,
             track_stacks,
+            paused: false,
+            captured_group: None,
+            owners: owners::Snapshot::default(),
             current: baseline,
             previous: Snapshot::default(),
             rows: Vec::new(),
@@ -154,21 +161,72 @@ impl App {
     }
 
     fn sample(&mut self, probe: &Probe, elapsed: f64) -> Result<()> {
-        self.previous = std::mem::replace(&mut self.current, probe.snapshot()?);
+        if self.paused {
+            return Ok(());
+        }
+        self.update_snapshot(probe.snapshot()?, elapsed);
+        self.sync_focus(probe)
+    }
+
+    fn update_snapshot(&mut self, snapshot: Snapshot, elapsed: f64) {
+        if self.paused {
+            return;
+        }
+        self.previous = std::mem::replace(&mut self.current, snapshot);
         self.elapsed = elapsed;
-        self.rebuild(probe)
+        self.rebuild_rows();
+    }
+
+    fn pause(&mut self) {
+        self.paused = true;
+        self.captured_group = self.selected;
+    }
+
+    fn resume(&mut self, baseline: Snapshot) {
+        self.paused = false;
+        self.captured_group = None;
+        self.current = baseline;
+        self.current.stacks.clear();
+        self.previous = self.current.clone();
+        self.elapsed = 0.0;
+        self.clear_details();
+        self.rebuild_rows();
+    }
+
+    fn details_available(&self) -> bool {
+        !self.paused || self.selected == self.captured_group
+    }
+
+    fn clear_details(&mut self) {
+        self.owners = owners::Snapshot::default();
+        self.previous.stacks.clear();
+        self.current.stacks.clear();
+        self.stack_rows.clear();
+        self.stack_paths.clear();
+        self.selected_stack = None;
+        self.frames.clear();
+        self.frame_scroll = 0;
+        self.samples.clear();
+        self.sample_index = 0;
     }
 
     fn rebuild(&mut self, probe: &Probe) -> Result<()> {
+        self.rebuild_rows();
+        self.sync_focus(probe)
+    }
+
+    fn rebuild_rows(&mut self) {
         self.rows = model::rows(&self.current, &self.previous, self.elapsed, self.group);
         self.total_rate = model::total_rate(&self.current, &self.previous, self.elapsed);
         if !self.rows.iter().any(|row| Some(row.key) == self.selected) {
             self.selected = self.rows.first().map(|row| row.key);
         }
-        self.sync_focus(probe)
     }
 
     fn sync_focus(&mut self, probe: &Probe) -> Result<()> {
+        if self.paused {
+            return Ok(());
+        }
         let focus = if self.track_stacks {
             self.selected.map(GroupKey::focus).unwrap_or_default()
         } else {
@@ -176,15 +234,7 @@ impl App {
         };
         if !focus.same_selection(probe.current_focus()) {
             probe.focus(focus)?;
-            self.previous.stacks.clear();
-            self.current.stacks.clear();
-            self.stack_rows.clear();
-            self.stack_paths.clear();
-            self.selected_stack = None;
-            self.frames.clear();
-            self.frame_scroll = 0;
-            self.samples.clear();
-            self.sample_index = 0;
+            self.clear_details();
             return Ok(());
         }
         if !self.track_stacks {
@@ -226,7 +276,7 @@ impl App {
     }
 
     fn move_stack(&mut self, offset: isize) {
-        if self.stack_rows.is_empty() {
+        if !self.details_available() || self.stack_rows.is_empty() {
             return;
         }
         let index = self
@@ -244,6 +294,9 @@ impl App {
     }
 
     fn scroll_frames(&mut self, offset: i16) {
+        if !self.details_available() {
+            return;
+        }
         self.frame_scroll = self
             .frame_scroll
             .saturating_add_signed(offset)
@@ -251,7 +304,7 @@ impl App {
     }
 
     fn receive_sample(&mut self, event: DropEvent, generation: u32) {
-        if self.selected.is_none() || event.generation != generation {
+        if self.paused || self.selected.is_none() || event.generation != generation {
             return;
         }
         self.samples.push_front(event);
@@ -261,8 +314,24 @@ impl App {
         }
     }
 
+    fn receive_owners(&mut self, mut snapshot: owners::Snapshot) -> bool {
+        if self.paused {
+            return false;
+        }
+        snapshot.holders.retain(|inode, _| {
+            self.samples
+                .iter()
+                .any(|sample| sample.socket_inode == *inode)
+        });
+        if snapshot.holders.is_empty() {
+            return false;
+        }
+        self.owners = snapshot;
+        true
+    }
+
     fn move_sample(&mut self, offset: isize) {
-        if !self.samples.is_empty() {
+        if self.details_available() && !self.samples.is_empty() {
             self.sample_index = self
                 .sample_index
                 .saturating_add_signed(offset)
@@ -371,7 +440,9 @@ fn render(frame: &mut ratatui::Frame, app: &App, labels: &Labels) {
         return;
     }
     let available = area.height - 3;
-    let list_height = if area.height < 24 {
+    let list_height = if area.width < 105 {
+        (area.height.saturating_sub(14) / 2).clamp(4, 12)
+    } else if area.height < 24 {
         5
     } else {
         (available * 30 / 100).clamp(6, 12)
@@ -391,11 +462,18 @@ fn render(frame: &mut ratatui::Frame, app: &App, labels: &Labels) {
         .constraints([Constraint::Min(0), Constraint::Length(20)])
         .split(Rect::new(area.x, area.y, area.width, 1));
     frame.render_widget(
-        Paragraph::new(format!(
-            "droptop | {} | {:.3}s",
-            app.group.name(),
-            app.elapsed
-        ))
+        Paragraph::new(Line::from(vec![
+            Span::raw("droptop | "),
+            Span::styled(
+                if app.paused { "PAUSED" } else { "LIVE" },
+                Style::default().fg(if app.paused {
+                    Color::Yellow
+                } else {
+                    Color::LightGreen
+                }),
+            ),
+            Span::raw(format!(" | {} | {:.3}s", app.group.name(), app.elapsed)),
+        ]))
         .style(
             Style::default()
                 .fg(Color::White)
@@ -441,11 +519,7 @@ fn render(frame: &mut ratatui::Frame, app: &App, labels: &Labels) {
         render_packet(frame, detail[0], app, labels);
         render_stack(frame, detail[1], app, labels);
     } else {
-        let packet_height = if layout[3].height >= 9 {
-            6
-        } else {
-            layout[3].height.saturating_sub(2)
-        };
+        let packet_height = layout[3].height.saturating_sub(1).min(8);
         let detail = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(packet_height), Constraint::Min(0)])
@@ -454,9 +528,11 @@ fn render(frame: &mut ratatui::Frame, app: &App, labels: &Labels) {
         render_stack(frame, detail[1], app, labels);
     }
     frame.render_widget(
-        Paragraph::new(
-            "j/k group | [/] skb | Left/Right path | PgUp/PgDn stack | g group | q quit",
-        )
+        Paragraph::new(if area.width >= 105 {
+            "Space pause/resume | j/k group | [/] skb | Left/Right path | PgUp/PgDn stack | g group | q quit"
+        } else {
+            "Space pause | j/k group | [/] skb | L/R path | PgUp/Dn stack | g group | q"
+        })
         .style(Style::default().fg(Color::Gray)),
         layout[4],
     );
@@ -554,6 +630,24 @@ fn render_groups(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Lab
 }
 
 fn render_timeline(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Labels) {
+    if !app.details_available() {
+        let captured = app
+            .captured_group
+            .map(|key| labels.group(key))
+            .unwrap_or_else(|| "none".into());
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Captured for {captured}; return to that group to browse"
+            ))
+            .block(
+                Block::default()
+                    .title(" Recent skb | PAUSED: no captured details for this group ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
     let selection = app
         .selected
         .map(|key| labels.group(key))
@@ -563,48 +657,87 @@ fn render_timeline(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &L
     let start = selected
         .saturating_sub(visible / 2)
         .min(app.samples.len().saturating_sub(visible));
-    let wide = area.width >= 105;
-    let widths = if wide {
-        vec![
-            Constraint::Length(10),
-            Constraint::Length(14),
-            Constraint::Min(25),
-            Constraint::Length(18),
-            Constraint::Length(21),
-        ]
-    } else {
-        vec![
-            Constraint::Length(10),
-            Constraint::Length(14),
-            Constraint::Min(20),
-        ]
-    };
-    let headers = if wide {
-        vec!["TIME", "PROTO / LEN", "FLOW", "REASON", "SITE"]
-    } else {
-        vec!["TIME", "PROTO / LEN", "FLOW"]
-    };
-    let rows = app
+    let show_site = area.width >= 105;
+    let show_reason = area.width >= 120;
+    let fields: Vec<Vec<String>> = app
         .samples
+        .iter()
+        .map(|event| {
+            let time = event.timestamp_ns.saturating_sub(app.started_ns) as f64 / 1e9;
+            let mut fields = vec![
+                format!("+{time:.3}s"),
+                format!("{} {}B", packet_protocol(event), event.length),
+                event.cpu.to_string(),
+                "-".into(),
+                app.owners.process_names(event.socket_inode),
+                format!("{} -> {}", endpoint(event, true), endpoint(event, false)),
+            ];
+            if show_reason {
+                fields.push(labels.reason(event.reason));
+            }
+            if show_site {
+                fields.push(labels.site(event.location));
+            }
+            fields
+        })
+        .collect();
+    let mut widths = vec![10_u16, 14, 4, 7];
+    let fixed: u16 = widths.iter().sum();
+    let mut headers = vec!["TIME", "PROTO / LEN", "CPU", "TID", "PROCESS [FD]", "FLOW"];
+    if show_reason {
+        headers.push("REASON");
+    }
+    if show_site {
+        headers.push("SITE");
+    }
+    let flexible = area
+        .width
+        .saturating_sub(2 + (headers.len() as u16 - 1) + fixed);
+    let desired = |column: usize| {
+        fields
+            .iter()
+            .map(|fields| Line::from(fields[column].as_str()).width() as u16)
+            .max()
+            .unwrap_or(0)
+    };
+    let flow_min = if show_site { 24 } else { 20 };
+    let reason_min = if show_reason { 14 } else { 0 };
+    let site_min = if show_site { 20 } else { 0 };
+    let process = desired(4)
+        .clamp(16, 40)
+        .min(flexible.saturating_sub(flow_min + reason_min + site_min));
+    let reason = if show_reason {
+        desired(6)
+            .clamp(14, 40)
+            .min(flexible.saturating_sub(process + flow_min + site_min))
+    } else {
+        0
+    };
+    // Reserve the call site before giving the flow column any unused space.
+    let site = if show_site {
+        desired(headers.len() - 1)
+            .clamp(20, 64)
+            .min(flexible.saturating_sub(process + reason + flow_min))
+    } else {
+        0
+    };
+    widths.extend([process, flexible.saturating_sub(process + reason + site)]);
+    if show_reason {
+        widths.push(reason);
+    }
+    if show_site {
+        widths.push(site);
+    }
+    let rows = fields
         .iter()
         .enumerate()
         .skip(start)
         .take(visible)
-        .map(|(index, event)| {
-            let time = event.timestamp_ns.saturating_sub(app.started_ns) as f64 / 1e9;
-            let mut cells = vec![
-                Cell::from(format!("+{time:.3}s")),
-                Cell::from(format!("{} {}B", packet_protocol(event), event.length)),
-                Cell::from(format!(
-                    "{} -> {}",
-                    endpoint(event, true),
-                    endpoint(event, false)
-                )),
-            ];
-            if wide {
-                cells.push(Cell::from(labels.reason(event.reason)));
-                cells.push(Cell::from(labels.site(event.location)));
-            }
+        .map(|(index, fields)| {
+            let cells = fields
+                .iter()
+                .zip(&widths)
+                .map(|(text, &width)| Cell::from(fit_cell(text, width)));
             let style = if index == selected {
                 Style::default()
                     .fg(Color::White)
@@ -616,7 +749,7 @@ fn render_timeline(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &L
             TableRow::new(cells).style(style)
         });
     frame.render_widget(
-        Table::new(rows, widths)
+        Table::new(rows, widths.iter().copied().map(Constraint::Length))
             .header(
                 TableRow::new(headers).style(
                     Style::default()
@@ -642,14 +775,50 @@ fn render_timeline(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &L
     );
     if app.samples.is_empty() && area.height >= 4 {
         frame.render_widget(
-            Paragraph::new("Waiting for a drop in the selected group")
-                .style(Style::default().fg(Color::Gray)),
+            Paragraph::new(if app.paused {
+                "No sample captured; resume to collect new drops"
+            } else {
+                "Waiting for a drop in the selected group"
+            })
+            .style(Style::default().fg(Color::Gray)),
             Rect::new(area.x + 1, area.y + 2, area.width.saturating_sub(2), 1),
         );
     }
 }
 
+fn fit_cell(text: &str, width: u16) -> String {
+    if Line::from(text).width() <= usize::from(width) {
+        return text.into();
+    }
+    let suffix = ".".repeat(usize::from(width.min(3)));
+    let limit = usize::from(width).saturating_sub(suffix.len());
+    let span = Span::raw(text);
+    let mut fitted = String::new();
+    let mut used = 0;
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let cells = Span::raw(grapheme.symbol).width();
+        if used + cells > limit {
+            break;
+        }
+        fitted.push_str(grapheme.symbol);
+        used += cells;
+    }
+    fitted.push_str(&suffix);
+    fitted
+}
+
 fn render_packet(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Labels) {
+    if !app.details_available() {
+        frame.render_widget(
+            Paragraph::new("No captured sample for this group").block(
+                Block::default()
+                    .title(" Selected skb ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
     let title = format!(
         " Selected skb {}/{} ",
         if app.samples.is_empty() {
@@ -661,8 +830,12 @@ fn render_packet(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Lab
     );
     let Some(event) = app.samples.get(app.sample_index) else {
         frame.render_widget(
-            Paragraph::new("Waiting for a sample")
-                .block(Block::default().title(title).borders(Borders::ALL)),
+            Paragraph::new(if app.paused {
+                "No sample captured"
+            } else {
+                "Waiting for a sample"
+            })
+            .block(Block::default().title(title).borders(Borders::ALL)),
             area,
         );
         return;
@@ -674,6 +847,18 @@ fn render_packet(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Lab
     let time = event.timestamp_ns.saturating_sub(app.started_ns) as f64 / 1e9;
     let lines = vec![
         Line::from(vec![
+            Span::styled("CPU ", Style::default().fg(Color::Yellow)),
+            Span::raw(event.cpu.to_string()),
+            Span::raw(" | "),
+            Span::styled(
+                "TID",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" - | THREAD -"),
+        ]),
+        Line::from(vec![
             Span::styled("SRC ", Style::default().fg(Color::Yellow)),
             Span::raw(source),
         ]),
@@ -682,6 +867,7 @@ fn render_packet(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Lab
             Span::raw(dest),
         ]),
         Line::from(format!("rx iif {ingress} | drop dev {device}")),
+        Line::from(app.owners.description(event.socket_inode, app.paused)),
         Line::from(format!(
             "+{time:.3}s | site {} | tuple {}",
             labels.site(event.location),
@@ -704,6 +890,17 @@ fn render_packet(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Lab
 }
 
 fn render_stack(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Labels) {
+    if !app.details_available() {
+        frame.render_widget(
+            Paragraph::new("No captured stack for this group").block(
+                Block::default()
+                    .title(" Group hot path ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
     let selected = app
         .stack_rows
         .iter()
@@ -717,7 +914,13 @@ fn render_stack(frame: &mut ratatui::Frame, area: Rect, app: &App, labels: &Labe
                 app.stack_rows[index].1
             )
         })
-        .unwrap_or_else(|| " Group hot path | waiting ".into());
+        .unwrap_or_else(|| {
+            if app.paused {
+                " Group hot path | no captured stack ".into()
+            } else {
+                " Group hot path | waiting ".into()
+            }
+        });
     let frames: Vec<_> = useful_frames(&app.frames, labels)
         .into_iter()
         .enumerate()
@@ -755,10 +958,9 @@ fn useful_frames(addresses: &[u64], labels: &Labels) -> Vec<String> {
     {
         frames.drain(..=index);
     }
-    while frames
-        .first()
-        .is_some_and(|frame| frame.starts_with("sk_skb_reason_drop"))
-    {
+    while frames.first().is_some_and(|frame| {
+        frame.starts_with("sk_skb_reason_drop+") || frame.starts_with("kfree_skb_reason+")
+    }) {
         frames.remove(0);
     }
     frames
@@ -841,25 +1043,46 @@ fn run(args: Args) -> Result<()> {
     let (sender, receiver) = mpsc::sync_channel(256);
     let dropped = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let ring = probe.samples(sender, Arc::clone(&dropped))?;
+    let owners = owners::Collector::new()?;
+    let mut last_owner_query: Option<Instant> = None;
     let mut screen = Screen::enter()?;
     let mut last = Instant::now();
     screen.terminal.draw(|frame| render(frame, &app, &labels))?;
     while !stop.load(Ordering::Relaxed) {
+        let mut owner_changed = false;
+        if let Some(snapshot) = owners.take() {
+            owner_changed = app.receive_owners(snapshot);
+        }
         ring.consume()?;
         let generation = probe.current_focus().generation;
         for event in receiver.try_iter() {
             app.receive_sample(event, generation);
         }
-        app.user_lost = dropped.load(Ordering::Relaxed);
-        let wait = interval
-            .saturating_sub(last.elapsed())
-            .min(Duration::from_millis(200));
-        if event::poll(wait)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        if !app.paused {
+            app.user_lost = dropped.load(Ordering::Relaxed);
+            if last_owner_query.is_none_or(|last| last.elapsed() >= Duration::from_secs(1)) {
+                let inodes: Vec<_> = app
+                    .samples
+                    .iter()
+                    .map(|sample| sample.socket_inode)
+                    .filter(|inode| *inode != 0)
+                    .collect();
+                if !inodes.is_empty() {
+                    owners.request(inodes);
+                    last_owner_query = Some(Instant::now());
                 }
-                match key.code {
+            }
+        }
+        let wait = if app.paused {
+            Duration::from_millis(200)
+        } else {
+            interval
+                .saturating_sub(last.elapsed())
+                .min(Duration::from_millis(200))
+        };
+        if event::poll(wait)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Down | KeyCode::Char('j') => app.move_row(&probe, 1)?,
@@ -870,20 +1093,37 @@ fn run(args: Args) -> Result<()> {
                     KeyCode::Char(']') => app.move_sample(-1),
                     KeyCode::PageDown => app.scroll_frames(5),
                     KeyCode::PageUp => app.scroll_frames(-5),
+                    KeyCode::Char(' ') => {
+                        if app.paused {
+                            // Exclude paused counts from the next measured interval.
+                            let now = Instant::now();
+                            app.resume(probe.snapshot()?);
+                            app.sync_focus(&probe)?;
+                            last = now;
+                        } else {
+                            app.pause();
+                            probe.focus(Default::default())?;
+                        }
+                    }
                     KeyCode::Char('g') => {
                         app.group = app.group.next();
                         app.selected = None;
                         app.rebuild(&probe)?;
                     }
                     _ => {}
-                }
-                screen.terminal.draw(|frame| render(frame, &app, &labels))?;
+                },
+                Event::Resize(..) => {}
+                _ => continue,
             }
+            screen.terminal.draw(|frame| render(frame, &app, &labels))?;
+            owner_changed = false;
         }
-        if last.elapsed() >= interval {
+        if !app.paused && last.elapsed() >= interval {
             let now = Instant::now();
             app.sample(&probe, now.duration_since(last).as_secs_f64())?;
             last = now;
+            screen.terminal.draw(|frame| render(frame, &app, &labels))?;
+        } else if owner_changed {
             screen.terminal.draw(|frame| render(frame, &app, &labels))?;
         }
     }
@@ -964,7 +1204,9 @@ mod tests {
         assert!(text.contains("vmbr0"));
         assert!(text.contains("Recent skb"));
         assert!(text.contains("Selected skb 1/1"));
-        assert!(text.contains("192.0.2.1:1234 -> 198.51.100.2:443"));
+        assert!(text.contains("SRC 192.0.2.1:1234"));
+        assert!(text.contains("DST 198.51.100.2:443"));
+        assert!(text.contains("PROCESS [FD]"));
         assert!(text.contains("Group hot path"));
         assert!(text.contains("br_stp_rcv"));
         assert!(!text.contains("__bpf_trace_kfree_skb"));
@@ -981,6 +1223,32 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
         terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
         assert!(buffer_text(&terminal, 60, 16).contains("enlarge the terminal"));
+    }
+
+    #[test]
+    fn hot_path_starts_at_the_drop_caller_instead_of_common_free_wrappers() {
+        let labels = Labels {
+            reasons: HashMap::new(),
+            interfaces: HashMap::new(),
+            symbols: vec![
+                (0x1000, "__bpf_trace_kfree_skb".into()),
+                (0x2000, "kfree_skb_reason".into()),
+                (0x3000, "__udp4_lib_rcv".into()),
+                (0x4000, "udp_rcv".into()),
+            ],
+        };
+        assert_eq!(
+            useful_frames(&[0x1008, 0x2010, 0x3020, 0x4000], &labels),
+            vec!["__udp4_lib_rcv+0x20", "udp_rcv+0x0"]
+        );
+        assert_eq!(
+            useful_frames(&[0x2010, 0x3020], &labels),
+            vec!["__udp4_lib_rcv+0x20"]
+        );
+        assert_eq!(
+            useful_frames(&[0x3020, 0x2010], &labels),
+            vec!["__udp4_lib_rcv+0x20", "kfree_skb_reason+0x10"]
+        );
     }
 
     fn sample(family: u8, status: u8) -> DropEvent {
@@ -1009,6 +1277,8 @@ mod tests {
             dest_port: 443,
             source,
             dest,
+            socket_inode: 0,
+            cpu: 5,
         }
     }
 
@@ -1039,6 +1309,107 @@ mod tests {
         assert_eq!(app.samples[app.sample_index].family, 4);
     }
 
+    fn counted_snapshot(count: u64) -> Snapshot {
+        let event = sample(4, 0);
+        let mut snapshot = Snapshot::default();
+        snapshot.drops.insert(
+            collect::Key {
+                location: event.location,
+                reason: event.reason,
+                ifindex: event.ifindex,
+                netns: event.netns,
+                protocol: 0x800,
+            },
+            count,
+        );
+        snapshot
+    }
+
+    #[test]
+    fn pause_freezes_counters_and_samples_but_allows_browsing() {
+        let mut app = App::new(GroupBy::Pair, counted_snapshot(10), true, 0);
+        app.update_snapshot(counted_snapshot(15), 0.5);
+        app.receive_sample(sample(4, 0), 4);
+        app.receive_sample(sample(6, 0), 4);
+        app.stack_rows = vec![(7, 2.0, 5), (8, 1.0, 3)];
+        app.stack_paths.insert(7, vec![0x3000]);
+        app.stack_paths.insert(8, vec![0x4000]);
+        app.selected_stack = Some(7);
+        app.pause();
+        app.update_snapshot(counted_snapshot(500), 30.0);
+        app.receive_sample(sample(4, 0), 4);
+        assert_eq!(app.total_rate, 10.0);
+        assert_eq!(app.elapsed, 0.5);
+        assert_eq!(app.rows[0].count, 15);
+        assert_eq!(app.samples.len(), 2);
+        app.move_sample(1);
+        app.move_stack(1);
+        assert_eq!(app.samples[app.sample_index].family, 4);
+        assert_eq!(app.selected_stack, Some(8));
+        assert_eq!(app.frames, vec![0x4000]);
+    }
+
+    #[test]
+    fn paused_group_changes_do_not_mislabel_or_discard_captured_details() {
+        let labels = Labels {
+            reasons: HashMap::from([(1, "NOT_SPECIFIED".into())]),
+            interfaces: HashMap::from([((2, 10), "vmbr0".into())]),
+            symbols: vec![(0x3000, "ip_forward".into())],
+        };
+        let mut app = App::new(GroupBy::Pair, Snapshot::default(), true, 0);
+        app.update_snapshot(counted_snapshot(5), 1.0);
+        app.receive_sample(sample(4, 0), 4);
+        app.pause();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
+        let original = buffer_text(&terminal, 80, 24);
+        assert!(original.contains("PAUSED"));
+        assert!(original.contains("Space pause"));
+        app.group = GroupBy::Reason;
+        app.rebuild_rows();
+        assert!(!app.details_available());
+        app.move_sample(1);
+        terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
+        let other = buffer_text(&terminal, 80, 24);
+        assert!(other.contains("no captured details for this group"));
+        assert!(!other.contains("192.0.2.1:1234"));
+        assert_eq!(app.samples.len(), 1);
+        app.group = GroupBy::Pair;
+        app.rebuild_rows();
+        terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
+        assert_eq!(buffer_text(&terminal, 80, 24), original);
+    }
+
+    #[test]
+    fn resume_keeps_totals_without_replaying_paused_drops_or_old_details() {
+        let mut app = App::new(GroupBy::Pair, counted_snapshot(10), true, 0);
+        app.update_snapshot(counted_snapshot(15), 1.0);
+        app.receive_sample(sample(4, 0), 4);
+        app.pause();
+        let mut baseline = counted_snapshot(500);
+        baseline.errors[0] = 10;
+        baseline.stacks.insert(7, 100);
+        app.resume(baseline);
+        assert!(!app.paused);
+        assert_eq!(app.rows[0].count, 500);
+        assert_eq!(app.total_rate, 0.0);
+        assert!(app.samples.is_empty());
+        assert!(app.current.stacks.is_empty());
+        assert_eq!(app.current.errors, app.previous.errors);
+        app.receive_sample(sample(4, 0), 6);
+        assert!(app.samples.is_empty());
+        let mut fresh = counted_snapshot(510);
+        fresh.errors[0] = 10;
+        fresh.stacks.insert(8, 2);
+        app.update_snapshot(fresh, 2.0);
+        assert_eq!(app.total_rate, 5.0);
+        assert_eq!(app.rows[0].count, 510);
+        assert_eq!(
+            model::stack_rates(&app.current, &app.previous, 2.0),
+            vec![(8, 1.0, 2)]
+        );
+    }
+
     #[test]
     fn packet_view_shows_full_tuple_and_interface_roles() {
         let labels = Labels {
@@ -1056,6 +1427,58 @@ mod tests {
         assert!(text.contains("[::2]:443"));
         assert!(text.contains("rx iif nic0 | drop dev vmbr0"));
         assert!(text.contains("site ip_forward+0x0"));
+        assert!(text.contains("CPU 5 | TID - | THREAD -"));
+        assert!(text.contains("PROC - | no socket inode available"));
+    }
+
+    #[test]
+    fn verified_socket_holders_never_imply_a_thread_and_freeze_with_the_sample() {
+        let labels = Labels {
+            reasons: HashMap::from([(1, "NOT_SPECIFIED".into())]),
+            interfaces: HashMap::new(),
+            symbols: vec![(0x3000, "ip_forward".into())],
+        };
+        let mut app = App::new(GroupBy::Pair, Snapshot::default(), true, 0);
+        app.selected = Some(GroupKey::Pair(1, 2, 10));
+        let mut event = sample(4, 0);
+        event.socket_inode = 123;
+        app.receive_sample(event, 4);
+        assert!(app.receive_owners(owners::Snapshot {
+            holders: HashMap::from([(
+                123,
+                vec![owners::Owner {
+                    pid: 99,
+                    name: "app".into()
+                }]
+            )]),
+            partial: false,
+        }));
+        app.pause();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
+        let frozen = buffer_text(&terminal, 80, 24);
+        assert!(frozen.contains("app(99)"));
+        assert!(frozen.contains("PROCESS [FD]"));
+        assert!(frozen.contains("FD snapshot"));
+        assert!(frozen.contains("CPU 5 | TID - | THREAD -"));
+        assert!(!app.receive_owners(owners::Snapshot {
+            holders: HashMap::from([(
+                123,
+                vec![owners::Owner {
+                    pid: 100,
+                    name: "other".into()
+                }]
+            )]),
+            partial: false,
+        }));
+        terminal.draw(|frame| render(frame, &app, &labels)).unwrap();
+        assert_eq!(buffer_text(&terminal, 80, 24), frozen);
+        app.resume(Snapshot::default());
+        assert!(!app.receive_owners(owners::Snapshot {
+            holders: HashMap::from([(123, Vec::new())]),
+            partial: false,
+        }));
+        assert!(app.owners.holders.is_empty());
     }
 
     #[test]
@@ -1079,7 +1502,7 @@ mod tests {
         let text = buffer_text(&terminal, 80, 24);
         assert!(text.contains("Selected skb 6/6"));
         assert!(text.contains("+1.000s"));
-        assert_eq!(terminal.backend().buffer()[(2, 12)].bg, Color::DarkGray);
+        assert_eq!(terminal.backend().buffer()[(2, 10)].bg, Color::DarkGray);
     }
 
     #[test]
@@ -1102,5 +1525,63 @@ mod tests {
         assert!(text.contains("NOT_SPECIFIED"));
         assert!(text.contains("ip_forward+0x0"));
         assert!(text.contains("Group hot path 1/1"));
+    }
+
+    #[test]
+    fn timeline_gives_the_call_site_room_and_keeps_tid_visible() {
+        let labels = Labels {
+            reasons: HashMap::from([(1, "NOT_SPECIFIED".into())]),
+            interfaces: HashMap::new(),
+            symbols: vec![(0x3000, "unix_stream_connect".into())],
+        };
+        let mut app = App::new(GroupBy::Pair, Snapshot::default(), true, 0);
+        app.selected = Some(GroupKey::Pair(1, 2, 10));
+        let mut event = sample(4, 0);
+        event.location = 0x3345;
+        event.socket_inode = 123;
+        app.samples.push_front(event);
+        app.receive_owners(owners::Snapshot {
+            holders: HashMap::from([(
+                123,
+                vec![owners::Owner {
+                    pid: 99,
+                    name: "app".into(),
+                }],
+            )]),
+            partial: false,
+        });
+        for width in [240, 180, 120, 105, 80] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 8)).unwrap();
+            terminal
+                .draw(|frame| render_timeline(frame, frame.area(), &app, &labels))
+                .unwrap();
+            let text = buffer_text(&terminal, width, 8);
+            if width >= 180 {
+                assert!(text.contains("unix_stream_connect+0x345"), "{text}");
+            }
+            assert!(text.contains("TID"), "{text}");
+            assert!(text.contains("CPU"), "{text}");
+            assert!(text.contains("PROCESS [FD]"), "{text}");
+            assert!(text.lines().nth(2).unwrap().contains("app(99)"), "{text}");
+            assert_eq!(terminal.backend().buffer()[(width - 1, 2)].symbol(), "│");
+        }
+    }
+
+    #[test]
+    fn truncated_cells_mark_missing_text_and_respect_terminal_width() {
+        for text in [
+            "netlink_broadcast_filtered+0x1234",
+            "\u{7f51}\u{5361}worker",
+        ] {
+            for width in 0..20 {
+                let fitted = fit_cell(text, width);
+                assert!(Line::from(fitted.as_str()).width() <= usize::from(width));
+                if Line::from(text).width() > usize::from(width) {
+                    assert!(fitted.ends_with(&".".repeat(usize::from(width.min(3)))));
+                } else {
+                    assert_eq!(fitted, text);
+                }
+            }
+        }
     }
 }
