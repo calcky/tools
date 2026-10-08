@@ -1,5 +1,5 @@
 [build.env]
-passthrough = ["BPFMAP_INCLUDE_DIR", "LIBBPF_SYS_LIBRARY_PATH", "LIBBPF_SYS_EXTRA_CFLAGS"]
+passthrough = ["BPFMAP_BPF_OBJECT", "BPFMAP_INCLUDE_DIR", "LIBBPF_SYS_LIBRARY_PATH", "LIBBPF_SYS_EXTRA_CFLAGS"]
 
 [target.armv7-unknown-linux-musleabihf]
 dockerfile = "ci/Dockerfile.arm"

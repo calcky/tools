@@ -33,7 +33,7 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libbpf-dev libelf-dev zlib1g-dev libzstd-dev pkg-config
+          sudo apt-get install -y --no-install-recommends clang libbpf-dev libelf-dev zlib1g-dev libzstd-dev pkg-config
       - name: Check
         env:
           LIBBPF_SYS_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu
@@ -65,6 +65,7 @@ jobs:
       LIBBPF_SYS_LIBRARY_PATH: /opt/bpfmap/lib
       LIBBPF_SYS_EXTRA_CFLAGS: "-I/opt/bpfmap/include"
       BPFMAP_INCLUDE_DIR: /opt/bpfmap/include
+      BPFMAP_BPF_OBJECT: target/count.bpf.o
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -86,7 +87,13 @@ jobs:
           platforms: arm,arm64
       - name: Build static executable
         working-directory: bpfmap
-        run: cross build --release --locked --target '${{ matrix.target }}'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang libbpf-dev
+          mkdir -p target
+          clang -target bpfel -O2 -g -Wall -Werror \
+            -I/usr/include/x86_64-linux-gnu -c bpf/count.bpf.c -o target/count.bpf.o
+          cross build --release --locked --target '${{ matrix.target }}'
       - name: Startup check
         working-directory: bpfmap
         run: |
@@ -141,7 +148,7 @@ jobs:
       - name: Publish executables
         run: |
           assets=(dist/bpfmap-linux-arm dist/bpfmap-linux-arm64 dist/bpfmap-linux-x86_64 dist/SHA256SUMS)
-          notes='Read-only BPF map metadata, bounded entry previews and live deltas. See bpfmap/README.md for usage.'
+          notes='Full BTF map names, type-aware read-only counts, searchable paged entries, per-CPU changes, map/program reference drilldown, XSK bindings and readable IP flow summaries. Fixes terminal detail alignment. See bpfmap/README.md for usage.'
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
             gh release edit "$RELEASE_TAG" --draft=false --title "bpfmap v${RELEASE_VERSION}" --notes "$notes"
