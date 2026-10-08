@@ -6,16 +6,17 @@ pub const HELP: &str = "Usage: netping [options] HOST | netping -s [options]
   -w          Live ICMP + UDP + TCP window (TCP echo, or connect with -C)
   -P PORT     TCP port override in window mode (UDP still uses -p)
   -u          UDP echo (requires netping -s)
-  -t          TCP echo over one connection (requires netping -s)
+  -t          TCP echo over persistent connections (requires netping -s)
   -C          TCP connect time (any TCP server)
               Default: ICMP echo
   -s          Serve UDP and TCP echo on the same port
   -b          Per-second performance reports (default: 1000 PPS, 10s)
   -f          Continuous ping-pong, one outstanding request (requires -b)
   -p PORT     Destination/listen port (default: 11111)
-  -c COUNT    Stop sending after COUNT attempts
+  -j N        Independent sessions per protocol (1..256, default: 1)
+  -c COUNT    Stop each session after COUNT attempts
   -i SECONDS  Send interval; decimals accepted (default: 1, or .001 with -b)
-  -r PPS      Send rate; mutually exclusive with -i and -f
+  -r PPS      Per-session send rate; mutually exclusive with -i and -f
   -W SECONDS  Per-request timeout (default: 1)
   -T SECONDS  Sending duration; -c and -T stop at whichever comes first
   -l BYTES    Payload including test header (default: 64); -M: maximum probe payload
@@ -24,6 +25,8 @@ pub const HELP: &str = "Usage: netping [options] HOST | netping -s [options]
 Times are in seconds. RTT/connection measurements are in milliseconds.
 Ctrl+C prints a summary. Server mode accepts only -s, -p and -4/-6.
 Window: -w rejects -u/-t/-s/-b/-f; rates and counts apply to each protocol.
+Sessions: rates/counts apply to each session; -j rejects -s/-M/-S.
+Window: s toggles protocol totals / session details when -j > 1.
 MTU: -M rejects -t/-C/-s/-w/-b/-f; -c caps all probes, including controls.
 MTU defaults: 9000-byte IP ceiling, 100ms pacing, 1s timeout, 60s duration.
 MSS: -S accepts HOST, -t, -p, -W and -4/-6; capture needs root/CAP_NET_RAW.
@@ -63,6 +66,7 @@ pub struct Options {
     pub v6: bool,
     pub host: Option<String>,
     pub port: u16,
+    pub sessions: usize,
     pub count: Option<u64>,
     pub interval: Duration,
     pub timeout: Duration,
@@ -95,6 +99,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
         v6: false,
         host: None,
         port: 11111,
+        sessions: 1,
         count: None,
         interval: Duration::from_secs(1),
         timeout: Duration::from_secs(1),
@@ -105,6 +110,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
     let (mut mode, mut pacing, mut family, mut client_flags, mut port_set) =
         (false, false, false, false, false);
     let mut size_set = false;
+    let mut sessions_set = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-u" | "-t" | "-C" => {
@@ -166,12 +172,22 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                     };
                 }
             }
-            "-p" | "-P" | "-c" | "-W" | "-T" | "-l" => {
+            "-p" | "-P" | "-j" | "-c" | "-W" | "-T" | "-l" => {
                 let value = args
                     .next()
                     .ok_or_else(|| format!("{arg} requires a value"))?;
                 client_flags |= arg != "-p";
                 match arg.as_str() {
+                    "-j" => {
+                        if sessions_set {
+                            return Err("specify -j only once".into());
+                        }
+                        sessions_set = true;
+                        o.sessions = value.parse().map_err(|_| "invalid session count")?;
+                        if !(1..=256).contains(&o.sessions) {
+                            return Err("sessions must be 1..256".into());
+                        }
+                    }
                     "-p" => {
                         o.port = value.parse().map_err(|_| "invalid port")?;
                         port_set = true;
@@ -211,6 +227,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Options, String> 
                 }
             }
         }
+    }
+    if sessions_set && (o.server || o.mtu || o.mss) {
+        return Err("-j cannot be combined with -s/-M/-S".into());
     }
     if o.mss {
         if o.server
@@ -381,5 +400,28 @@ mod tests {
         assert_eq!(o.interval, Duration::from_secs(1));
         assert!(o.duration.is_none());
         assert!(opts("-w -p 2222 host").is_ok());
+    }
+
+    #[test]
+    fn sessions_preserve_per_session_pacing_and_count() {
+        for mode in ["", "-u", "-t", "-C", "-w"] {
+            let o = opts(&format!("{mode} -j 10 -r 2 -c 3 host")).unwrap();
+            assert_eq!(o.sessions, 10);
+            assert_eq!(o.interval, Duration::from_millis(500));
+            assert_eq!(o.count, Some(3));
+        }
+        assert_eq!(opts("host").unwrap().sessions, 1);
+        for flags in [
+            "-j",
+            "-j 0",
+            "-j -1",
+            "-j 257",
+            "-j 2 -j 2",
+            "-s -j 1",
+            "-M -j 1",
+            "-S -j 1",
+        ] {
+            assert!(opts(&format!("{flags} host")).is_err(), "{flags}");
+        }
     }
 }

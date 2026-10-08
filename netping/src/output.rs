@@ -12,6 +12,7 @@ pub struct Printer<W: Write> {
     bench: bool,
     mode: Mode,
     lines: usize,
+    session: Option<usize>,
 }
 impl<W: Write> Printer<W> {
     pub fn new(mut out: W, o: &Options, addr: SocketAddr) -> io::Result<Self> {
@@ -31,13 +32,33 @@ impl<W: Write> Printer<W> {
             },
             if o.bench { "performance" } else { "ping" }
         )?;
+        if o.sessions > 1 {
+            writeln!(
+                out,
+                "{} sessions | {} | counts per session",
+                o.sessions,
+                if o.flood {
+                    "ping-pong per session".into()
+                } else {
+                    format!("{:.3} PPS/session", 1.0 / o.interval.as_secs_f64())
+                }
+            )?;
+        }
         out.flush()?;
         Ok(Self {
             out,
             bench: o.bench,
             mode: o.mode,
             lines: 0,
+            session: None,
         })
+    }
+    pub fn select_session(&mut self, session: usize) {
+        self.session = Some(session);
+    }
+    fn prefix(&self) -> String {
+        self.session
+            .map_or_else(String::new, |id| format!("session={id} "))
     }
     pub fn result(&mut self, seq: u64, r: &Outcome) -> io::Result<()> {
         if self.bench {
@@ -48,10 +69,12 @@ impl<W: Write> Printer<W> {
         } else {
             "rtt"
         };
+        let prefix = self.prefix();
         match r {
             Outcome::Received(d) | Outcome::Reordered(d) => writeln!(
                 self.out,
-                "seq={seq} {name}={:.6} ms{}",
+                "{}seq={seq} {name}={:.6} ms{}",
+                prefix,
                 d.as_secs_f64() * 1000.0,
                 if matches!(r, Outcome::Reordered(_)) {
                     " reordered"
@@ -59,27 +82,44 @@ impl<W: Write> Printer<W> {
                     ""
                 }
             )?,
-            Outcome::Late => writeln!(self.out, "seq={seq} late")?,
-            Outcome::Duplicate => writeln!(self.out, "seq={seq} duplicate")?,
+            Outcome::Late => writeln!(self.out, "{prefix}seq={seq} late")?,
+            Outcome::Duplicate => writeln!(self.out, "{prefix}seq={seq} duplicate")?,
             Outcome::Invalid => return Ok(()),
         };
         self.out.flush()
     }
     pub fn failure(&mut self, seq: u64, message: &str) -> io::Result<()> {
         if !self.bench {
-            writeln!(self.out, "seq={seq} {message}")?;
+            let prefix = self.prefix();
+            writeln!(self.out, "{prefix}seq={seq} {message}")?;
             self.out.flush()?;
         }
         Ok(())
     }
+    pub fn error(&self, message: &str) {
+        eprintln!("netping: {}{message}", self.prefix());
+    }
     pub fn sample(&mut self, s: &mut Tracker, elapsed: Duration, span: Duration) -> io::Result<()> {
+        self.sample_windows(&s.total, &s.current, s.pending.len(), elapsed, span)?;
+        if self.bench {
+            s.current = Window::default();
+        }
+        Ok(())
+    }
+    pub fn sample_windows(
+        &mut self,
+        total: &Window,
+        w: &Window,
+        pending: usize,
+        elapsed: Duration,
+        span: Duration,
+    ) -> io::Result<()> {
         if !self.bench {
             return Ok(());
         }
         if self.lines.is_multiple_of(20) {
             writeln!(self.out," ELAPSED      TX/s      RX/s   TX-kB/s   RX-kB/s   PEND   TIMEOUT  FAILED {}   MIN(ms)   AVG(ms)   P99(ms)   MAX(ms) LIMITED SKIPPED",if self.mode.datagram(){" LOSS%"}else{" FAIL%"})?;
         }
-        let w = &s.current;
         let secs = span.as_secs_f64().max(1e-9);
         let bandwidth = if self.mode == Mode::Connect {
             format!("{:>9} {:>9}", "-", "-")
@@ -108,20 +148,26 @@ impl<W: Write> Printer<W> {
             w.sent as f64 / secs,
             w.recv as f64 / secs,
             bandwidth,
-            s.pending.len(),
+            pending,
             w.timeout,
             w.failed,
-            s.total.loss(),
+            total.loss(),
             values,
             w.limited,
             w.skipped
         )?;
         self.lines += 1;
-        s.current = Window::default();
         self.out.flush()
     }
     pub fn summary(&mut self, s: &Tracker, elapsed: Duration) -> io::Result<()> {
-        let w = &s.total;
+        self.summary_window(&s.total, s.pending.len(), elapsed)
+    }
+    pub fn summary_window(
+        &mut self,
+        w: &Window,
+        pending: usize,
+        elapsed: Duration,
+    ) -> io::Result<()> {
         writeln!(
             self.out,
             "\n--- {} statistics | {:.3} s ---\n",
@@ -141,7 +187,7 @@ impl<W: Write> Printer<W> {
             ),
             ("Timeout", w.timeout.to_string()),
             ("Failed", w.failed.to_string()),
-            ("Pending", s.pending.len().to_string()),
+            ("Pending", pending.to_string()),
             ("Reordered", w.reordered.to_string()),
             ("Duplicate", w.duplicate.to_string()),
             ("Late", w.late.to_string()),
@@ -200,6 +246,61 @@ impl<W: Write> Printer<W> {
             w.recv > 0,
             3,
         )?;
+        self.out.flush()
+    }
+
+    pub fn sessions_header(&mut self) -> io::Result<()> {
+        writeln!(
+            self.out,
+            "\nSession details (latencies in ms; TCP connect uses connection time)"
+        )?;
+        writeln!(self.out, " SID LOCAL                      SENT     RECV {}  TIMEOUT FAILED PENDING      AVG      P95      P99 STATE", if self.mode.datagram() { " LOSS%" } else { " FAIL%" })
+    }
+
+    pub fn session_row(
+        &mut self,
+        id: usize,
+        local: &str,
+        s: &Tracker,
+        state: &str,
+    ) -> io::Result<()> {
+        let w = &s.total;
+        let latency = |value: f64| {
+            if w.recv > 0 {
+                format!("{value:.3}")
+            } else {
+                "-".into()
+            }
+        };
+        writeln!(
+            self.out,
+            "{id:4} {local:25} {:8} {:8} {:6.2} {:8} {:6} {:7} {:>8} {:>8} {:>8} {state}",
+            w.sent,
+            w.recv,
+            w.loss(),
+            w.timeout,
+            w.failed,
+            s.pending.len(),
+            latency(w.mean),
+            latency(w.quantile(0.95)),
+            latency(w.quantile(0.99))
+        )
+    }
+    pub fn session_error(
+        &mut self,
+        id: usize,
+        connect_failed: u64,
+        error: Option<&str>,
+    ) -> io::Result<()> {
+        if connect_failed > 0 {
+            writeln!(
+                self.out,
+                "  session={id} connection setup failures: {connect_failed}"
+            )?;
+        }
+        if let Some(error) = error {
+            writeln!(self.out, "  session={id} last error: {error}")?;
+        }
         self.out.flush()
     }
 

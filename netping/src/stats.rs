@@ -61,6 +61,31 @@ impl Default for Window {
     }
 }
 impl Window {
+    pub fn merge(&mut self, other: &Self) {
+        if other.recv > 0 {
+            let n = self.recv as f64 + other.recv as f64;
+            let delta = other.mean - self.mean;
+            self.m2 += other.m2 + delta * delta * self.recv as f64 * other.recv as f64 / n;
+            self.mean += delta * other.recv as f64 / n;
+            self.min = self.min.min(other.min);
+            self.max = self.max.max(other.max);
+            self.hist
+                .add(&other.hist)
+                .expect("matching RTT histogram bounds");
+        }
+        self.sent += other.sent;
+        self.recv += other.recv;
+        self.tx_bytes += other.tx_bytes;
+        self.rx_bytes += other.rx_bytes;
+        self.timeout += other.timeout;
+        self.failed += other.failed;
+        self.late += other.late;
+        self.duplicate += other.duplicate;
+        self.reordered += other.reordered;
+        self.invalid += other.invalid;
+        self.limited += other.limited;
+        self.skipped += other.skipped;
+    }
     fn record(&mut self, e: &Event) {
         match e {
             Event::Sent => self.sent += 1,
@@ -236,6 +261,24 @@ impl Tracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn merging_sessions_weights_rtt_samples_and_preserves_distribution() {
+        let mut a = Window::default();
+        let mut b = Window::default();
+        for ms in [1, 2, 3] {
+            a.record(&Event::Received(Duration::from_millis(ms)));
+        }
+        b.record(&Event::Received(Duration::from_millis(10)));
+        b.record(&Event::Timeout);
+        a.merge(&b);
+        a.merge(&Window::default());
+        assert_eq!((a.recv, a.timeout, a.min, a.max), (4, 1, 1.0, 10.0));
+        assert_eq!(a.mean, 4.0);
+        assert!((a.deviation() - 12.5_f64.sqrt()).abs() < 1e-9);
+        assert_eq!(a.hist.len(), 4);
+        assert_eq!(a.quantile(0.95), 10.0);
+        assert_eq!(a.loss(), 20.0);
+    }
     #[test]
     fn reordering_counts_first_valid_replies_without_losing_rtt_samples() {
         let t = Instant::now();

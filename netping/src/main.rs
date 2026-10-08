@@ -9,6 +9,7 @@ mod options;
 mod output;
 mod probe;
 mod server;
+mod sessions;
 mod stats;
 mod tcp;
 mod terminal;

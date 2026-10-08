@@ -29,6 +29,10 @@ netping -s
 netping -u -c 20 192.168.0.1
 netping -t -c 20 192.168.0.1
 
+# Ten independent sessions to one target, each at one PPS
+netping -t -j 10 -r 1 192.168.0.1
+netping -u -j 10 -r 1 192.168.0.1
+
 # Connection time to an ordinary TCP service
 netping -C -p 443 192.168.0.1
 
@@ -50,6 +54,7 @@ netping -S -p 443 192.168.0.1
 | --- | --- |
 | `-u` / `-t` / `-C` | UDP echo / TCP echo / TCP connect; default ICMP |
 | `-s` | Serve UDP and TCP together; default port 11111 |
+| `-j N` | Independent sessions per protocol, 1–256 (default 1); not with `-s/-M/-S` |
 | `-w` | Live ICMP, UDP and TCP statistics and details |
 | `-p PORT` | Destination or listening port; default 11111 |
 | `-P PORT` | Override only the window's TCP port, not UDP |
@@ -69,6 +74,15 @@ timeout, reordered, duplicate and late replies.
 RTT is in milliseconds: `rtt min/avg/max/mdev = ...`, with P50/P95/P99 percentiles on a separate line.
 Performance mode reports PPS, application bandwidth and RTT distribution every second.
 
+With `-j`, rate, interval and count apply per session; `-T` is the common sending duration.
+TCP echo uses independent persistent connections, UDP uses distinct source ports,
+and ICMP uses logical streams with distinct Echo IDs; `-C` runs independent connect schedules.
+Text replies include a session ID. Totals combine all samples; the final session table
+shows local endpoint, sent/received, failure/timeout, pending, mean and P95/P99.
+Overall RTT is weighted by successful samples, with percentiles from merged histograms.
+A failed session does not stop the others. Bounded history is retained per session,
+so memory grows with `-j`; use `flowgen` for large connection load tests.
+
 ICMP/UDP report probe loss; TCP reports request failures/timeouts, not network packet loss.
 TCP echo RTT excludes the initial connection. `-C` explicitly measures connection time.
 
@@ -77,6 +91,9 @@ TCP echo RTT excludes the initial connection. `-C` explicitly measures connectio
 Arrows or `j/k` select a protocol; Space pauses/resumes sending, `r` restarts,
 and `q` or Ctrl+C quits. Pending requests still complete or time out while paused.
 Each protocol's summary is printed on exit.
+`-w -j N` creates N sessions per protocol. Press `s` to toggle the selected protocol's
+totals/session details, and `j/k` to select a session. Pause/reset apply to all sessions;
+exit prints protocol totals and session tables.
 
 ## Notes
 

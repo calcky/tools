@@ -30,14 +30,26 @@ pub trait Reporter {
 impl Reporter for () {}
 
 #[derive(Default)]
-pub struct Tokens(usize);
+pub struct Tokens {
+    next: usize,
+    echo_base: Option<u16>,
+    echo_next: u16,
+}
 impl Tokens {
     fn next(&mut self) -> io::Result<Token> {
-        self.0 = self
-            .0
+        self.next = self
+            .next
             .checked_add(1)
             .ok_or_else(|| io::Error::other("event token exhausted"))?;
-        Ok(Token(self.0))
+        Ok(Token(self.next))
+    }
+    fn echo_id(&mut self, seed: u64) -> u16 {
+        let id = self
+            .echo_base
+            .get_or_insert(seed as u16)
+            .wrapping_add(self.echo_next);
+        self.echo_next = self.echo_next.wrapping_add(1);
+        id
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,6 +72,7 @@ pub struct Probe {
     pub tracker: Tracker,
     pub link: Link,
     pub last: Option<Duration>,
+    pub last_at: Option<Instant>,
     pub last_failure: Option<&'static str>,
     pub error: Option<String>,
     pub connect_failed: u64,
@@ -67,6 +80,7 @@ pub struct Probe {
     pub fatal: bool,
     pub ever_ready: bool,
     pub retrans: Retrans,
+    local: Option<SocketAddr>,
     id: u64,
     recover: bool,
     socket: Option<Socket>,
@@ -89,6 +103,7 @@ impl Probe {
             addr,
             link: Link::Unavailable,
             last: None,
+            last_at: None,
             last_failure: None,
             error: None,
             connect_failed: 0,
@@ -96,6 +111,7 @@ impl Probe {
             fatal: false,
             ever_ready: false,
             retrans: Retrans::new(start),
+            local: None,
             id: 0,
             recover,
             socket: None,
@@ -130,8 +146,8 @@ impl Probe {
         p.id = u64::from_ne_bytes(bytes).max(1);
         match p.options.mode {
             Mode::Icmp => {
-                let (s, icmp) = Icmp::socket(&p.options, addr, p.id)?;
                 let token = tokens.next()?;
+                let (s, icmp) = Icmp::socket(&p.options, addr, u64::from(tokens.echo_id(p.id)))?;
                 r.register(&s, token, Interest::READABLE)?;
                 p.socket = Some(s);
                 p.token = Some(token);
@@ -143,6 +159,7 @@ impl Probe {
                 let s = net::socket(p.options.v6, false)?;
                 s.bind(&net::any(p.options.v6, 0).into())?;
                 s.connect(&addr.into())?;
+                p.local = s.local_addr()?.as_socket();
                 let token = tokens.next()?;
                 r.register(&s, token, Interest::READABLE)?;
                 p.socket = Some(s);
@@ -201,6 +218,16 @@ impl Probe {
             Link::Closed => "Closed",
         }
     }
+    pub fn local_label(&self) -> String {
+        if let Some(icmp) = &self.icmp {
+            format!("id={}", icmp.identifier())
+        } else if self.options.mode == Mode::Connect {
+            "per-probe".into()
+        } else {
+            self.local
+                .map_or_else(|| "-".into(), |addr| addr.to_string())
+        }
+    }
     fn close_echo(&mut self) {
         self.sample_tcp(Instant::now(), true);
         self.socket = None;
@@ -231,6 +258,7 @@ impl Probe {
                 Err(e) => return Err(e),
             };
             let token = tokens.next()?;
+            self.local = s.local_addr()?.as_socket();
             r.register(
                 &s,
                 token,
@@ -261,6 +289,7 @@ impl Probe {
     fn failure(&mut self, seq: u64, message: &str, sink: &mut impl Reporter) -> io::Result<()> {
         self.tracker.fail(seq);
         self.last_failure = Some("failed");
+        self.last_at = Some(Instant::now());
         self.error = Some(message.into());
         sink.failure(seq, message)
     }
@@ -296,8 +325,10 @@ impl Probe {
         if let Outcome::Received(d) | Outcome::Reordered(d) = outcome {
             self.last = Some(d);
             self.last_failure = None;
+            self.last_at = Some(now);
         } else if was_pending && matches!(outcome, Outcome::Late) {
             self.last_failure = Some("timeout");
+            self.last_at = Some(now);
         }
         sink.result(seq, &outcome)
     }
@@ -339,6 +370,7 @@ impl Probe {
                 }
             }
             self.last_failure = Some("timeout");
+            self.last_at = Some(now);
             sink.failure(seq, "timeout")?;
             broken_write |= self.write.as_ref().is_some_and(|w| w.seq == seq);
         }
@@ -588,8 +620,6 @@ impl Probe {
                         } else if let Some(i) = &self.icmp {
                             if let Some(payload) = i.payload(&buf[..n]) {
                                 self.message(payload, sink)?;
-                            } else {
-                                self.tracker.record(Event::Invalid);
                             }
                         } else {
                             self.message(&buf[..n], sink)?;
@@ -683,6 +713,21 @@ fn advance(next: &mut Instant, now: Instant, interval: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn echo_ids_are_unique_across_wrap_and_use_the_first_sessions_seed() {
+        let mut tokens = Tokens::default();
+        assert_eq!(tokens.echo_id(65500), 65500);
+        let mut ids = std::collections::HashSet::from([65500]);
+        for n in 1..256 {
+            let id = tokens.echo_id(100);
+            assert_eq!(id, 65500_u16.wrapping_add(n));
+            assert!(ids.insert(id));
+        }
+        assert_eq!(tokens.next().unwrap(), Token(1));
+        assert_eq!(Tokens::default().echo_id(100), 100);
+    }
+
     #[test]
     fn peer_reports_require_a_matching_session_and_a_known_current_connection_request() {
         let options = crate::options::parse(["-t", "host"].map(str::to_owned)).unwrap();

@@ -76,6 +76,8 @@ pub struct View {
     pub elapsed: Duration,
     pub paused: bool,
     pub draining: bool,
+    pub sessions: usize,
+    pub session_view: bool,
     pub rows: Vec<Row>,
 }
 
@@ -632,11 +634,14 @@ fn table(f: &mut Frame, area: Rect, view: &View, state: &State) {
     } else {
         &["Protocol", "Sent", "Recv", "Loss-Fail%", "Last", "Avg"]
     };
-    let base: &[u16] = if wide {
-        &[11, 9, 9, 10, 10, 9, 9, 9, 9]
+    let mut base = if wide {
+        vec![11, 9, 9, 10, 10, 9, 9, 9, 9]
     } else {
-        &[9, 7, 7, 10, 10, 10]
+        vec![9, 7, 7, 10, 10, 10]
     };
+    if view.session_view && area.width >= 80 && (!wide || area.width >= 120) {
+        base[0] = 20;
+    }
     let spare = area
         .width
         .saturating_sub(2 + base.iter().sum::<u16>() + headers.len() as u16 - 1);
@@ -654,10 +659,21 @@ fn table(f: &mut Frame, area: Rect, view: &View, state: &State) {
         })
         .collect();
     for (index, header) in headers.iter().enumerate() {
-        text(f, columns[index], header, bold(), index > 0);
+        text(
+            f,
+            columns[index],
+            if index == 0 && view.session_view {
+                "Session"
+            } else {
+                header
+            },
+            bold(),
+            index > 0,
+        );
     }
-    let start = state.selected.saturating_sub(2);
-    for (offset, row) in view.rows.iter().enumerate().skip(start).take(3) {
+    let visible = usize::from(area.height.saturating_sub(1));
+    let start = state.selected.saturating_sub(visible.saturating_sub(1));
+    for (offset, row) in view.rows.iter().enumerate().skip(start).take(visible) {
         let y = area.y + 1 + (offset - start) as u16;
         let style = if let Some(alert) = row.alert {
             alert.style()
@@ -719,12 +735,21 @@ pub fn draw(f: &mut Frame, view: &View, state: &mut State) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(4),
+        Constraint::Length(if view.session_view {
+            area.height.saturating_sub(16).clamp(3, 10)
+        } else {
+            4
+        }),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
     .areas(area);
-    let Some(panels) = detail_layout(detail_area, view) else {
+    let panels = if view.session_view {
+        Some(vec![detail_area])
+    } else {
+        detail_layout(detail_area, view)
+    };
+    let Some(panels) = panels else {
         f.render_widget(
             Paragraph::new(
                 "Terminal too small for all three details\nUse 80x24 or a wider/taller terminal\nResize or press q",
@@ -761,10 +786,15 @@ pub fn draw(f: &mut Frame, view: &View, state: &mut State) {
         f,
         settings,
         &format!(
-            "Interval:{:.3}s Timeout:{:.3}s Elapsed:{:.1}s",
+            "Interval:{:.3}s Timeout:{:.3}s Elapsed:{:.1}s{}",
             view.interval.as_secs_f64(),
             view.timeout.as_secs_f64(),
-            view.elapsed.as_secs_f64()
+            view.elapsed.as_secs_f64(),
+            if view.sessions > 1 {
+                format!(" Sessions:{}", view.sessions)
+            } else {
+                String::new()
+            }
         ),
         Style::default(),
         false,
@@ -773,20 +803,29 @@ pub fn draw(f: &mut Frame, view: &View, state: &mut State) {
     if panels.is_empty() {
         text(f, detail_area, "No protocol rows", Style::default(), false);
     }
-    for (index, (row, panel)) in view.rows.iter().zip(panels).enumerate() {
+    let rows: Vec<_> = if view.session_view {
+        view.rows.get(state.selected).into_iter().collect()
+    } else {
+        view.rows.iter().collect()
+    };
+    for (index, (row, panel)) in rows.into_iter().zip(panels).enumerate() {
         details(
             f,
             panel,
             row,
-            index == state.selected,
+            view.session_view || index == state.selected,
             index > 0 && panel.x == detail_area.x,
-            detail_area.width >= 120,
+            !view.session_view && detail_area.width >= 120,
         );
     }
     text(
         f,
         footer,
-        "j/k Up/Down focus | Space pause | r reset | q quit",
+        if view.sessions > 1 {
+            "s totals/sessions | j/k move | Space pause | r reset | q quit"
+        } else {
+            "j/k Up/Down focus | Space pause | r reset | q quit"
+        },
         Style::default(),
         false,
     );
@@ -842,6 +881,8 @@ mod tests {
             elapsed: Duration::from_secs(65),
             paused: false,
             draining: false,
+            sessions: 1,
+            session_view: false,
             rows: vec![row("ICMP"), row("UDP"), row("TCP")],
         }
     }
@@ -850,6 +891,25 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| draw(f, view, state)).unwrap();
         terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn session_view_scrolls_and_shows_selected_details_at_normal_sizes() {
+        let mut report = view();
+        report.sessions = 20;
+        report.session_view = true;
+        report.rows = (1..=20)
+            .map(|n| row(&format!("S{n} 127.0.0.1:{}", 40000 + n)))
+            .collect();
+        for (width, height) in [(80, 24), (120, 24), (60, 24)] {
+            let buffer = screen(&report, &mut State { selected: 19 }, width, height);
+            let content = lines(&buffer).join("\n");
+            assert!(content.contains("Session"));
+            assert!(content.contains("S20"));
+            assert!(content.contains("P95:"));
+            assert!(content.contains("Pending:"));
+            assert!(!content.contains("Terminal too small"));
+        }
     }
 
     fn lines(buffer: &Buffer) -> Vec<String> {

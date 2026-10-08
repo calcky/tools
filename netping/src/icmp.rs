@@ -13,6 +13,9 @@ pub struct Icmp {
     v6: bool,
 }
 impl Icmp {
+    pub fn identifier(&self) -> u16 {
+        self.id
+    }
     pub fn socket(o: &Options, addr: SocketAddr, session: u64) -> io::Result<(Socket, Self)> {
         let domain = if o.v6 { Domain::IPV6 } else { Domain::IPV4 };
         let protocol = if o.v6 {

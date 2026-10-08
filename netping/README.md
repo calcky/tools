@@ -21,6 +21,8 @@ netping 192.168.0.1                         # ICMP, one probe per second
 netping -s                                 # Serve UDP + TCP on port 11111
 netping -u 192.168.0.1                      # UDP echo
 netping -t 192.168.0.1                      # TCP echo on one established connection
+netping -t -j 10 -r 1 192.168.0.1           # Ten TCP sessions, one PPS per session
+netping -u -j 10 -c 20 192.168.0.1          # Ten UDP source ports, 20 probes each
 netping -C -p 443 192.168.0.1               # TCP connection time
 netping -u -c 20 -i .1 192.168.0.1          # 20 probes, 100ms apart
 netping -u -b 192.168.0.1                   # 1000 PPS, 10 seconds, per-second reports
@@ -61,6 +63,7 @@ address in the selected family is tested for the entire run.
 | `-b` | Performance mode: one report per second; default 1000 PPS and 10s |
 | `-f` | Continuous ping-pong, at most one request pending; requires `-b` |
 | `-p PORT` | Destination or listening port; default 11111; not used with ICMP |
+| `-j N` | Independent sessions per protocol, 1..256 (default 1); not with `-s/-M/-S` |
 | `-c COUNT` | Maximum send attempts; positive integer |
 | `-i SECONDS` | Send interval; default 1s in ping mode, .001s in performance mode |
 | `-r PPS` | Send rate; mutually exclusive with `-i` and `-f` |
@@ -76,6 +79,30 @@ durations and timeouts have a maximum of 86400s. The maximum configured PPS is
 count or sending duration ends, outstanding requests drain until their
 individual deadlines. Ctrl+C/SIGTERM stop immediately and retain pending
 requests in the summary.
+
+With `-j N`, one target is resolved once and each session has its own socket,
+sequence space, deadlines and RTT distribution. TCP echo keeps N connections;
+UDP uses N distinct source ports; ICMP uses distinct Echo IDs (logical streams,
+not TCP/UDP connections). `-C` runs N independent connection-probe schedules.
+Rates, intervals and counts apply to each session: `-j 10 -r 2 -c 5` sends up
+to 50 probes at a combined 20 PPS. `-T` is the common sending duration, and
+`-f` allows one outstanding request per session. TCP echo setup precedes the
+text-mode measurement clock. A session failure does not stop the other sessions.
+
+Text replies include `session=N`. Performance reports and the final summary
+aggregate all sessions; RTT averages and standard deviation are weighted by
+successful samples, and percentiles come from the merged RTT histogram, not
+the average of session percentiles. The final session table includes the local
+endpoint/Echo ID, sent/received, loss/failure, timeout, failed, pending, mean,
+P95/P99 and state. Exit status is 1 if any session has no success or becomes
+unavailable/fatal. Each session retains bounded history, so memory usage grows
+with `-j`; use flowgen for large-scale connection load tests.
+
+`-w -j N` creates N sessions for each of ICMP, UDP and TCP. The default view
+shows three protocol totals. Press `s` to inspect sessions of the selected
+protocol, use Up/Down or `j/k` to choose a session and see its details, and press
+`s` again to return. Pause and reset apply to every session. Exit prints each
+protocol's total and session table.
 
 ## TCP MSS inspection
 
@@ -370,6 +397,7 @@ python3 netping/tests/retrans.py bin/netping
 python3 netping/tests/mtu.py bin/netping
 python3 netping/tests/mss.py bin/netping
 sudo python3 netping/tests/mss.py bin/netping --capture
+python3 netping/tests/sessions.py bin/netping
 sudo unshare -n python3 netping/tests/retrans.py bin/netping --loss
 sudo unshare -n python3 netping/tests/mtu.py bin/netping --network
 sudo unshare -n python3 netping/tests/mss.py bin/netping --network

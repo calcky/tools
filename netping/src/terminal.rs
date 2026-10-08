@@ -24,6 +24,7 @@ pub enum Action {
     Down,
     Pause,
     Reset,
+    Sessions,
     Quit,
 }
 
@@ -148,6 +149,7 @@ fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
         KeyCode::Char(' ') if key.kind == KeyEventKind::Press => Some(Action::Pause),
         KeyCode::Char('r') if key.kind == KeyEventKind::Press => Some(Action::Reset),
+        KeyCode::Char('s') if key.kind == KeyEventKind::Press => Some(Action::Sessions),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
@@ -177,6 +179,7 @@ mod tests {
             (KeyCode::Char('j'), Action::Down),
             (KeyCode::Char(' '), Action::Pause),
             (KeyCode::Char('r'), Action::Reset),
+            (KeyCode::Char('s'), Action::Sessions),
             (KeyCode::Char('q'), Action::Quit),
         ] {
             assert_eq!(

@@ -243,7 +243,11 @@ def responder_worker(pipe, v6, separate, udp_mode, tcp_mode):
             serial += 1
             heapq.heappush(scheduled, (now + delay, serial, lane, target, data))
 
-        if mode == 'drop':
+        if mode == 'drop' or (mode == 'first-drop' and session == original[0]):
+            return
+        if mode == 'first-close' and session == original[0]:
+            target.close()
+            del clients[target]
             return
         if mode == 'replay' and session != original[0] and ordinal == 1:
             enqueue(original[1])
@@ -254,7 +258,7 @@ def responder_worker(pipe, v6, separate, udp_mode, tcp_mode):
                 enqueue(response, .025)
             enqueue(response, .20 if ordinal == 2 else .60 if ordinal == 4 else 0)
         else:
-            enqueue(response, .45 if mode == 'delay' else 0)
+            enqueue(response, .45 if mode == 'delay' else .08 if mode == 'reorder' and ordinal == 1 else 0)
 
     try:
         udp = socket.socket(family, socket.SOCK_DGRAM)

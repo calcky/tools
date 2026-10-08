@@ -128,12 +128,14 @@ jobs:
           for arch in arm arm64 x86_64; do
             test -s "dist/netping-linux-$arch"
           done
-          assets=(dist/netping-linux-arm dist/netping-linux-arm64 dist/netping-linux-x86_64)
+          (cd dist && sha256sum netping-linux-arm netping-linux-arm64 netping-linux-x86_64 > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+          assets=(dist/netping-linux-arm dist/netping-linux-arm64 dist/netping-linux-x86_64 dist/SHA256SUMS)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false --title "netping v${RELEASE_VERSION}"
+            gh release edit "$RELEASE_TAG" --draft=false --title "netping v${RELEASE_VERSION}" --notes-file netping/RELEASE.md
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --draft --verify-tag --title "netping v${RELEASE_VERSION}" --generate-notes
+              --draft --verify-tag --title "netping v${RELEASE_VERSION}" --notes-file netping/RELEASE.md
             gh release edit "$RELEASE_TAG" --draft=false
           fi

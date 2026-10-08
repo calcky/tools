@@ -4,6 +4,7 @@ use crate::{
     options::{Mode, Options},
     output::Printer,
     probe::{Link, Probe, Tokens},
+    sessions,
     terminal::{Action, Terminal},
     ui,
 };
@@ -27,6 +28,7 @@ fn probes(o: &Options, ip: IpAddr, start: Instant, r: &Reactor, tokens: &mut Tok
         },
     ]
     .into_iter()
+    .flat_map(|mode| std::iter::repeat_n(mode, o.sessions))
     .map(|mode| {
         let mut options = o.clone();
         options.mode = mode;
@@ -105,10 +107,84 @@ fn row(p: &Probe) -> ui::Row {
             || alert.is_some_and(|a| a != ui::Alert::Retrans),
     }
 }
-fn view(o: &Options, ip: IpAddr, start: Instant, paused: bool, probes: &[Probe]) -> ui::View {
+
+fn group_row(probes: &[Probe]) -> ui::Row {
+    if probes.len() == 1 {
+        return row(&probes[0]);
+    }
+    let latest = probes.iter().max_by_key(|p| p.last_at).unwrap();
+    let mut result = row(latest);
+    let summary = sessions::summarize(probes.iter(), false);
+    let w = summary.total;
+    result.sent = w.sent;
+    result.received = w.recv;
+    result.loss = w.loss();
+    result.min = (w.recv > 0).then_some(w.min);
+    result.avg = (w.recv > 0).then_some(w.mean);
+    result.max = (w.recv > 0).then_some(w.max);
+    result.mdev = (w.recv > 0).then(|| w.deviation());
+    result.p50 = (w.recv > 0).then(|| w.quantile(0.5));
+    result.p95 = (w.recv > 0).then(|| w.quantile(0.95));
+    result.p99 = (w.recv > 0).then(|| w.quantile(0.99));
+    result.pending = summary.pending;
+    result.timeout = w.timeout;
+    result.failed = w.failed;
+    result.reordered = w.reordered;
+    result.duplicate = w.duplicate;
+    result.late = w.late;
+    result.invalid = w.invalid;
+    result.limited = w.limited;
+    result.skipped = w.skipped;
+    result.connect_failed = probes.iter().map(|p| p.connect_failed).sum();
+    if result.retrans.is_some() {
+        result.retrans = Some(summary.retrans);
+    }
+    result.bad = probes.iter().any(|p| row(p).bad);
+    result.alert = probes
+        .iter()
+        .filter_map(|p| row(p).alert)
+        .min_by_key(|alert| match alert {
+            ui::Alert::Disconnected => 0,
+            ui::Alert::Timeout => 1,
+            ui::Alert::Failed => 2,
+            ui::Alert::Retrans => 3,
+        });
+    result.state = if probes.iter().all(|p| p.link == Link::Unavailable) {
+        "Unavailable".into()
+    } else {
+        format!(
+            "{}/{} Ready",
+            probes.iter().filter(|p| p.link == Link::Ready).count(),
+            probes.len()
+        )
+    };
+    result.error = probes
+        .iter()
+        .enumerate()
+        .find_map(|(i, p)| p.error.as_ref().map(|e| format!("session={}: {e}", i + 1)));
+    result
+}
+
+fn view(
+    o: &Options,
+    ip: IpAddr,
+    start: Instant,
+    paused: bool,
+    probes: &[Probe],
+    session_view: bool,
+    protocol: usize,
+) -> ui::View {
     let now = Instant::now();
     ui::View {
-        host: o.host.clone().unwrap(),
+        host: if session_view {
+            format!(
+                "{} | {} sessions",
+                o.host.as_ref().unwrap(),
+                probes[protocol * o.sessions].options.mode.name()
+            )
+        } else {
+            o.host.clone().unwrap()
+        },
         ip,
         udp_port: o.port,
         tcp_port: o.tcp_port.unwrap_or(o.port),
@@ -117,7 +193,21 @@ fn view(o: &Options, ip: IpAddr, start: Instant, paused: bool, probes: &[Probe])
         elapsed: now - start,
         paused,
         draining: probes.iter().all(|p| !p.sending(now)),
-        rows: probes.iter().map(row).collect(),
+        sessions: o.sessions,
+        session_view,
+        rows: if session_view {
+            probes[protocol * o.sessions..(protocol + 1) * o.sessions]
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let mut result = row(p);
+                    result.name = format!("S{} {}", i + 1, p.local_label());
+                    result
+                })
+                .collect()
+        } else {
+            probes.chunks(o.sessions).map(group_row).collect()
+        },
     }
 }
 
@@ -129,6 +219,8 @@ pub fn run(o: &Options, r: &mut Reactor) -> Result<bool, Box<dyn std::error::Err
     let mut start = Instant::now();
     let mut probes = probes(o, ip, start, r, &mut tokens);
     let mut paused = false;
+    let mut session_view = false;
+    let mut protocol = 0;
     let mut next_draw = start;
     let mut events = Events::with_capacity(1024);
     'running: loop {
@@ -138,8 +230,25 @@ pub fn run(o: &Options, r: &mut Reactor) -> Result<bool, Box<dyn std::error::Err
         for _ in 0..64 {
             match terminal.key()? {
                 Some(Action::Quit) => break 'running,
-                Some(Action::Up) => state.selected = (state.selected + 2) % 3,
-                Some(Action::Down) => state.selected = (state.selected + 1) % 3,
+                Some(Action::Up) => {
+                    let count = if session_view { o.sessions } else { 3 };
+                    state.selected = (state.selected + count - 1) % count;
+                }
+                Some(Action::Down) => {
+                    state.selected =
+                        (state.selected + 1) % if session_view { o.sessions } else { 3 }
+                }
+                Some(Action::Sessions) => {
+                    if o.sessions > 1 {
+                        if session_view {
+                            state.selected = protocol;
+                        } else {
+                            protocol = state.selected;
+                            state.selected = 0;
+                        }
+                        session_view = !session_view;
+                    }
+                }
                 Some(Action::Pause) => {
                     paused = !paused;
                     if !paused {
@@ -164,7 +273,10 @@ pub fn run(o: &Options, r: &mut Reactor) -> Result<bool, Box<dyn std::error::Err
             }
         }
         if now >= next_draw {
-            terminal.draw(&view(o, ip, start, paused, &probes), &mut state)?;
+            terminal.draw(
+                &view(o, ip, start, paused, &probes, session_view, protocol),
+                &mut state,
+            )?;
             next_draw = Instant::now() + REFRESH;
         }
         if probes.iter().all(|p| p.done(Instant::now())) {
@@ -185,16 +297,23 @@ pub fn run(o: &Options, r: &mut Reactor) -> Result<bool, Box<dyn std::error::Err
     }
     drop(terminal);
     let elapsed = start.elapsed();
-    for p in &mut probes {
-        p.finish_tcp();
-        let mut printer = Printer::new(io::stdout().lock(), &p.options, p.addr)?;
-        printer.summary(&p.tracker, elapsed)?;
-        printer.retrans(p.retrans.summary())?;
-        if p.connect_failed > 0 {
-            println!("  TCP connection setup failures: {}", p.connect_failed);
+    if o.sessions > 1 {
+        for group in probes.chunks_mut(o.sessions) {
+            let options = group[0].options.clone();
+            sessions::print_summary(&options, group, elapsed)?;
         }
-        if let Some(error) = &p.error {
-            println!("  {} | last error: {error}", p.state());
+    } else {
+        for p in &mut probes {
+            p.finish_tcp();
+            let mut printer = Printer::new(io::stdout().lock(), &p.options, p.addr)?;
+            printer.summary(&p.tracker, elapsed)?;
+            printer.retrans(p.retrans.summary())?;
+            if p.connect_failed > 0 {
+                println!("  TCP connection setup failures: {}", p.connect_failed);
+            }
+            if let Some(error) = &p.error {
+                println!("  {} | last error: {error}", p.state());
+            }
         }
     }
     Ok(probes
